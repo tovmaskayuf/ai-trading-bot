@@ -139,9 +139,37 @@ def score_risk(metrics: dict[str, float],
 
 # --- Axis 3: Market Structure ---------------------------------------------
 
+def structure_metrics(market: dict[str, Any], candles: list[dict]) -> dict[str, float]:
+    """Raw structure metrics, scored later relative to the basket."""
+    out: dict[str, float] = {}
+
+    mcap = market.get("mcap")
+    vol_usd = market.get("volume_24h_usd")
+    if mcap and vol_usd:
+        out["turnover"] = vol_usd / mcap * 100
+
+    # Volume trend: last 24 bars vs the prior 7-day average.
+    if len(candles) >= 192:
+        vols = [c["v"] for c in candles]
+        baseline = sum(vols[-192:-24]) / 168
+        if baseline > 0:
+            out["volume_trend"] = (sum(vols[-24:]) / 24) / baseline
+
+    return out
+
+
 def score_structure(symbol: str, market: dict[str, Any], book: dict[str, float] | None,
-                    candles: list[dict]) -> tuple[float | None, dict[str, Any]]:
-    """Market cap standing, liquidity turnover, volume trend, and spread."""
+                    metrics: dict[str, float],
+                    basket: dict[str, dict[str, float]]) -> tuple[float | None, dict[str, Any]]:
+    """Market cap standing, liquidity turnover, volume trend, and spread.
+
+    Turnover and volume trend are ranked *within the basket* rather than against
+    fixed thresholds. Absolute bands proved regime-dependent -- in a quiet
+    market every asset's raw turnover sits at the bottom of any fixed range, so
+    the whole axis collapses toward zero and drags every composite down with it.
+    Rank and spread keep absolute scales, since those are meaningful on their
+    own terms (rank 1 is rank 1; a 0.1bp spread is tight in any regime).
+    """
     detail: dict[str, Any] = {}
     parts: list[tuple[float, float]] = []
 
@@ -151,24 +179,15 @@ def score_structure(symbol: str, market: dict[str, Any], book: dict[str, float] 
         # Rank 1 -> 100, rank 15 -> ~30. Size is a proxy for durability.
         parts.append((ind.scale(rank, 1, len(config.ASSETS), invert=True) * 0.7 + 30, 1.0))
 
-    mcap = market.get("mcap")
-    vol_usd = market.get("volume_24h_usd")
-    if mcap and vol_usd:
-        turnover = vol_usd / mcap * 100
-        detail["turnover_pct"] = round(turnover, 2)
-        # Healthy turnover is roughly 2-30% of cap per day. Very low means
-        # illiquid; extreme highs usually mean a speculative blow-off.
-        parts.append((ind.scale(turnover, 0.5, 25), 1.0))
+    if "turnover" in metrics:
+        detail["turnover_pct"] = round(metrics["turnover"], 2)
+        pop = [m["turnover"] for m in basket.values() if "turnover" in m]
+        parts.append((ind.pct_rank(metrics["turnover"], pop), 1.0))
 
-    # Volume trend: last 24 bars vs the prior 7-day average.
-    if len(candles) >= 192:
-        vols = [c["v"] for c in candles]
-        recent = sum(vols[-24:]) / 24
-        baseline = sum(vols[-192:-24]) / 168
-        if baseline > 0:
-            ratio = recent / baseline
-            detail["volume_vs_7d"] = round(ratio, 2)
-            parts.append((ind.scale(ratio, 0.4, 2.5), 0.8))
+    if "volume_trend" in metrics:
+        detail["volume_vs_7d"] = round(metrics["volume_trend"], 2)
+        pop = [m["volume_trend"] for m in basket.values() if "volume_trend" in m]
+        parts.append((ind.pct_rank(metrics["volume_trend"], pop), 0.8))
 
     if book:
         detail["spread_bps"] = round(book["spread_bps"], 3)
@@ -284,14 +303,53 @@ def signal_for(composite: float | None, momentum: float | None,
             return "HOLD"
         return "BUY"
 
-    # In the dead band: keep an existing bullish stance, otherwise stay neutral.
+    # In the dead band. HOLD and NEUTRAL are both "do nothing", but they mean
+    # different things: HOLD is a bullish stance still being carried, NEUTRAL is
+    # genuinely flat and uninteresting. Anchoring HOLD to an actually-open
+    # position (plus one cycle of grace for a rating that just cooled off) keeps
+    # the distinction real -- feeding "HOLD" back in here would make it
+    # self-sustaining and NEUTRAL unreachable.
     if holding or prev_signal in ("BUY", "STRONG BUY"):
         return "HOLD"
-    return "HOLD"
+    return "NEUTRAL"
+
+
+def build_baskets(candles_by_symbol: dict[str, list[dict]],
+                  market: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Precompute the cross-sectional context every asset is scored against.
+
+    Several axes are relative rather than absolute, so this must run over the
+    whole basket before any individual asset can be rated.
+    """
+    risk_basket: dict[str, dict[str, float]] = {}
+    structure_basket: dict[str, dict[str, float]] = {}
+    returns_basket: dict[str, dict[str, float]] = {}
+
+    for symbol, candles in candles_by_symbol.items():
+        rm = risk_metrics(candles)
+        if rm:
+            risk_basket[symbol] = rm
+
+        structure_basket[symbol] = structure_metrics(market.get(symbol, {}), candles)
+
+        closes = [c["c"] for c in candles]
+        returns_basket[symbol] = {
+            "24h": ind.pct_change(closes, 24),
+            "7d": ind.pct_change(closes, 168),
+            "30d": ind.pct_change(closes, min(720, max(len(closes) - 1, 1))),
+        }
+
+    return {
+        "risk": risk_basket,
+        "structure": structure_basket,
+        "returns": returns_basket,
+        "benchmark": returns_basket.get(config.BENCHMARK, {}),
+    }
 
 
 def rate_asset(symbol: str, candles: list[dict], market: dict[str, Any],
                book: dict[str, float] | None, risk_basket: dict[str, dict[str, float]],
+               structure_basket: dict[str, dict[str, float]],
                returns_basket: dict[str, dict[str, float]],
                benchmark_returns: dict[str, float],
                prev_signal: str | None = None,
@@ -299,7 +357,8 @@ def rate_asset(symbol: str, candles: list[dict], market: dict[str, Any],
     """Full rating for one asset. Returns sub-scores, composite, grade, signal
     and the supporting detail the dashboard renders in the drill-down panel."""
     momentum, m_detail = score_momentum(candles)
-    structure, s_detail = score_structure(symbol, market, book, candles)
+    structure, s_detail = score_structure(
+        symbol, market, book, structure_basket.get(symbol, {}), structure_basket)
     relative, r_detail = score_relative(symbol, candles, returns_basket, benchmark_returns)
 
     my_risk = risk_basket.get(symbol)

@@ -91,6 +91,32 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Manual (user-driven) paper trading, kept entirely separate from the bot's
+-- own positions so the two track records can be compared side by side.
+-- This is a holdings model, not a positions model: buying more of something
+-- you already own averages into one line rather than opening a second lot,
+-- which is how a brokerage account actually behaves.
+CREATE TABLE IF NOT EXISTS manual_holdings (
+    symbol     TEXT PRIMARY KEY,
+    qty        REAL NOT NULL,
+    avg_cost   REAL NOT NULL,
+    updated_ts INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS manual_trades (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol  TEXT NOT NULL,
+    side    TEXT NOT NULL,
+    qty     REAL NOT NULL,
+    price   REAL NOT NULL,
+    value   REAL NOT NULL,
+    fee     REAL NOT NULL DEFAULT 0,
+    ts      INTEGER NOT NULL,
+    pnl     REAL,
+    pnl_pct REAL
+);
+CREATE INDEX IF NOT EXISTS idx_manual_trades_ts ON manual_trades(ts);
 """
 
 
@@ -257,8 +283,15 @@ def prune(retention_days: int = config.RETENTION_DAYS) -> int:
 
 
 def reset_portfolio() -> None:
-    """Wipe simulated trading state. Market data is preserved."""
+    """Wipe the bot's simulated trading state. Market data is preserved."""
     with tx() as conn:
         conn.execute("DELETE FROM positions")
         conn.execute("DELETE FROM trades")
         conn.execute("DELETE FROM equity")
+
+
+def reset_manual() -> None:
+    """Wipe the user's manual portfolio. Leaves the bot's state untouched."""
+    with tx() as conn:
+        conn.execute("DELETE FROM manual_holdings")
+        conn.execute("DELETE FROM manual_trades")

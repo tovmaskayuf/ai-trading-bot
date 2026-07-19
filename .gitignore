@@ -17,6 +17,9 @@ data/
 *.db-journal
 *.sqlite3
 
+# Runtime logs
+*.log
+
 # Secrets
 .env
 .env.*

@@ -120,7 +120,12 @@ MIN_HOLD_MINUTES = 30
 
 STARTING_CAPITAL = 100_000.0
 RISK_PER_TRADE = 0.02          # fraction of equity risked per position
-MAX_POSITION_PCT = 0.15        # hard cap on any single position
+
+# These two are coupled: MAX_POSITION_PCT * MAX_OPEN_POSITIONS must stay <= 1.0
+# or the position limit is unreachable, because cash runs out first and the
+# book silently caps below MAX_OPEN_POSITIONS. 0.12 * 8 = 0.96 leaves a small
+# cash buffer for fees.
+MAX_POSITION_PCT = 0.12        # hard cap on any single position
 MAX_OPEN_POSITIONS = 8
 STOP_ATR_MULT = 2.0
 TAKE_PROFIT_ATR_MULT = 3.0
