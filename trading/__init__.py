@@ -1,1 +1,1 @@
-"""Paper-trading: portfolio accounting and the signal-driven strategy."""
+"""Paper trading: the user's portfolio, holdings and trade accounting."""

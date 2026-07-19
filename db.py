@@ -49,54 +49,14 @@ CREATE TABLE IF NOT EXISTS ratings (
 );
 CREATE INDEX IF NOT EXISTS idx_ratings_ts ON ratings(ts);
 
-CREATE TABLE IF NOT EXISTS positions (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    symbol       TEXT NOT NULL,
-    qty          REAL NOT NULL,
-    entry_price  REAL NOT NULL,
-    entry_ts     INTEGER NOT NULL,
-    stop         REAL,
-    take_profit  REAL,
-    high_water   REAL,
-    status       TEXT NOT NULL DEFAULT 'open',
-    rationale    TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
-
-CREATE TABLE IF NOT EXISTS trades (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    position_id INTEGER,
-    symbol      TEXT NOT NULL,
-    side        TEXT NOT NULL,
-    qty         REAL NOT NULL,
-    price       REAL NOT NULL,
-    ts          INTEGER NOT NULL,
-    fee         REAL DEFAULT 0,
-    pnl         REAL,
-    pnl_pct     REAL,
-    exit_reason TEXT,
-    rationale   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts);
-
-CREATE TABLE IF NOT EXISTS equity (
-    ts              INTEGER PRIMARY KEY,
-    cash            REAL,
-    positions_value REAL,
-    total           REAL,
-    drawdown_pct    REAL
-);
-
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
 
--- Manual (user-driven) paper trading, kept entirely separate from the bot's
--- own positions so the two track records can be compared side by side.
--- This is a holdings model, not a positions model: buying more of something
--- you already own averages into one line rather than opening a second lot,
--- which is how a brokerage account actually behaves.
+-- The user's paper-trading portfolio. This is a holdings model, not a
+-- positions model: buying more of something you already own averages into one
+-- line rather than opening a second lot, which is how a brokerage behaves.
 CREATE TABLE IF NOT EXISTS manual_holdings (
     symbol     TEXT PRIMARY KEY,
     qty        REAL NOT NULL,
@@ -117,6 +77,27 @@ CREATE TABLE IF NOT EXISTS manual_trades (
     pnl_pct REAL
 );
 CREATE INDEX IF NOT EXISTS idx_manual_trades_ts ON manual_trades(ts);
+
+-- Portfolio value over time, one row per engine cycle plus one per trade.
+-- Never pruned: the long-range charts are the product.
+CREATE TABLE IF NOT EXISTS manual_equity (
+    ts           INTEGER PRIMARY KEY,
+    cash         REAL,
+    invested     REAL,
+    market_value REAL,
+    total        REAL,
+    realized     REAL,
+    fees         REAL
+);
+"""
+
+# Tables from the retired auto-trading bot. Dropped on connect so old databases
+# migrate cleanly; the user's own portfolio tables are untouched.
+MIGRATIONS = """
+DROP TABLE IF EXISTS positions;
+DROP TABLE IF EXISTS trades;
+DROP TABLE IF EXISTS equity;
+DELETE FROM meta WHERE key='cash';
 """
 
 
@@ -137,6 +118,7 @@ def connect() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA synchronous=NORMAL")
         _conn.executescript(SCHEMA)
+        _conn.executescript(MIGRATIONS)
         _conn.commit()
     return _conn
 
@@ -202,14 +184,33 @@ def insert_rating(symbol: str, ts: int, r: dict[str, Any]) -> None:
         )
 
 
-def insert_equity(ts: int, cash: float, positions_value: float,
-                  total: float, drawdown_pct: float) -> None:
+def insert_manual_equity(ts: int, cash: float, invested: float, market_value: float,
+                         total: float, realized: float, fees: float) -> None:
     with tx() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO equity (ts, cash, positions_value, total, drawdown_pct) "
-            "VALUES (?,?,?,?,?)",
-            (ts, cash, positions_value, total, drawdown_pct),
+            "INSERT OR REPLACE INTO manual_equity "
+            "(ts, cash, invested, market_value, total, realized, fees) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (ts, cash, invested, market_value, total, realized, fees),
         )
+
+
+def manual_equity_series(since: int | None, max_points: int = 360) -> list[dict[str, Any]]:
+    """Equity rows since `since` (None = all time), downsampled to about
+    `max_points` by keeping the last row of each time bucket. Last-in-bucket is
+    the right reduction for a value curve -- an average would smooth away the
+    very moves the chart exists to show."""
+    if since is None:
+        first = query_one("SELECT MIN(ts) AS t FROM manual_equity")
+        since = (first or {}).get("t") or 0
+    span = max(now_ms() - since, 1)
+    bucket = max(60_000, span // max_points)
+    return query(
+        "SELECT * FROM manual_equity WHERE ts IN ("
+        "  SELECT MAX(ts) FROM manual_equity WHERE ts >= ? GROUP BY ts / ?"
+        ") ORDER BY ts",
+        (since, bucket),
+    )
 
 
 # --- Readers ---------------------------------------------------------------
@@ -282,16 +283,9 @@ def prune(retention_days: int = config.RETENTION_DAYS) -> int:
     return n
 
 
-def reset_portfolio() -> None:
-    """Wipe the bot's simulated trading state. Market data is preserved."""
-    with tx() as conn:
-        conn.execute("DELETE FROM positions")
-        conn.execute("DELETE FROM trades")
-        conn.execute("DELETE FROM equity")
-
-
 def reset_manual() -> None:
-    """Wipe the user's manual portfolio. Leaves the bot's state untouched."""
+    """Wipe the user's portfolio and its history. Market data is preserved."""
     with tx() as conn:
         conn.execute("DELETE FROM manual_holdings")
         conn.execute("DELETE FROM manual_trades")
+        conn.execute("DELETE FROM manual_equity")

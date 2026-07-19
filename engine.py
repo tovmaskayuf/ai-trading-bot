@@ -1,8 +1,12 @@
 """The polling engine.
 
-One asyncio loop drives everything: fetch -> persist -> rate -> trade -> record.
-A failure in any single provider degrades that cycle rather than killing the
-service, because this is expected to run unattended for weeks.
+One asyncio loop drives everything on a 60-second tick: fetch -> persist ->
+rate -> record portfolio value. A failure in any single provider degrades that
+cycle rather than killing the service, because this is expected to run
+unattended for weeks.
+
+There is no automated trading here. The engine's job is data and ratings; all
+trading decisions belong to the user.
 """
 
 from __future__ import annotations
@@ -15,9 +19,10 @@ from typing import Any, Callable
 import config
 import db
 import providers
+import settings
 from analytics import indicators as ind
 from analytics import rating
-from trading import portfolio, strategy
+from trading import manual
 
 log = logging.getLogger("engine")
 
@@ -27,7 +32,6 @@ STATE: dict[str, Any] = {
     "cycle": 0,
     "updated_at": None,
     "assets": {},
-    "actions": [],
     "errors": [],
     "running": False,
 }
@@ -59,54 +63,58 @@ def _candles_as_dicts(rows: list[tuple]) -> list[dict]:
     return [dict(zip(("open_time", "o", "h", "l", "c", "v"), r)) for r in rows]
 
 
-async def refresh_candles() -> dict[str, list[dict]]:
-    """Pull fresh OHLC for every asset and persist it."""
+async def refresh_candles(interval: str = config.CANDLE_INTERVAL,
+                          limit: int = config.CANDLE_LIMIT) -> dict[str, list[dict]]:
+    """Pull fresh OHLC for every asset at the given interval and persist it."""
     out: dict[str, list[dict]] = {}
     for symbol in config.SYMBOLS:
         try:
-            rows = await providers.fetch_candles(symbol)
+            rows = await providers.fetch_candles(symbol, interval=interval, limit=limit)
             if rows:
-                db.upsert_candles(symbol, config.CANDLE_INTERVAL, rows)
+                db.upsert_candles(symbol, interval, rows)
                 out[symbol] = _candles_as_dicts(rows)
         except Exception as e:
-            log.warning("candle refresh failed for %s: %s", symbol, e)
+            log.warning("candle refresh (%s) failed for %s: %s", interval, symbol, e)
     return out
 
 
 def load_candles() -> dict[str, list[dict]]:
-    """Read candles back out of the database."""
+    """Read hourly candles back out of the database."""
     return {s: db.get_candles(s) for s in config.SYMBOLS}
 
 
 async def run_cycle(cycle: int) -> None:
     ts = db.now_ms()
     errors: list[str] = []
+    prefs = settings.get()
+    followed = set(prefs["followed"])
 
     # --- Fetch -------------------------------------------------------------
     try:
         prices = await providers.fetch_prices()
     except Exception as e:
         log.error("price fetch failed entirely: %s", e)
-        STATE["errors"] = [f"price fetch failed: {e}"]
+        STATE["errors"] = [f"Price fetch failed: {e}"]
         return
 
-    refresh_klines = cycle % config.KLINE_EVERY_N_CYCLES == 0
-    refresh_market = cycle % config.MARKET_EVERY_N_CYCLES == 0
-
-    if refresh_klines:
+    if cycle % config.KLINE_EVERY_N_CYCLES == 0:
         candles = await refresh_candles()
         if len(candles) < len(config.SYMBOLS):
             candles = {**load_candles(), **candles}
     else:
         candles = load_candles()
 
+    if cycle % config.DAILY_EVERY_N_CYCLES == 0:
+        await refresh_candles(config.DAILY_INTERVAL, config.DAILY_LIMIT)
+
+    refresh_market = cycle % config.MARKET_EVERY_N_CYCLES == 0
     market: dict[str, Any] = STATE.get("_market") or {}
     if refresh_market or not market:
         try:
             market = await providers.fetch_market()
             STATE["_market"] = market
         except Exception as e:
-            errors.append(f"market: {e}")
+            errors.append(f"Market data: {e}")
             log.warning("market fetch failed: %s", e)
 
     book: dict[str, Any] = STATE.get("_book") or {}
@@ -115,7 +123,7 @@ async def run_cycle(cycle: int) -> None:
             book = await providers.fetch_book()
             STATE["_book"] = book
         except Exception as e:
-            errors.append(f"book: {e}")
+            errors.append(f"Order book: {e}")
 
     # --- Persist snapshots -------------------------------------------------
     for symbol in config.SYMBOLS:
@@ -140,13 +148,12 @@ async def run_cycle(cycle: int) -> None:
 
     # --- Rate --------------------------------------------------------------
     baskets = rating.build_baskets(candles, market)
-    ratings: dict[str, dict[str, Any]] = {}
     assets_view: dict[str, Any] = {}
 
     for symbol in config.SYMBOLS:
         cs = candles.get(symbol, [])
         prev = db.latest_rating(symbol)
-        holding = portfolio.position_for(symbol) is not None
+        holding = manual.holding_for(symbol) is not None
         try:
             r = rating.rate_asset(
                 symbol, cs, market.get(symbol, {}), book.get(symbol),
@@ -156,10 +163,9 @@ async def run_cycle(cycle: int) -> None:
             )
         except Exception as e:
             log.exception("rating failed for %s", symbol)
-            errors.append(f"rating {symbol}: {e}")
+            errors.append(f"Rating {symbol}: {e}")
             continue
 
-        ratings[symbol] = r
         db.insert_rating(symbol, ts, r)
 
         p = prices.get(symbol, {})
@@ -169,6 +175,8 @@ async def run_cycle(cycle: int) -> None:
             "name": asset.name,
             "thesis": asset.thesis,
             "source": asset.price_source,
+            "followed": symbol in followed,
+            "held": holding,
             # Last 48h of closes, for the inline sparkline in the grid.
             "spark": [round(c["c"], 8) for c in cs[-48:]],
             "price": p.get("price"),
@@ -182,52 +190,49 @@ async def run_cycle(cycle: int) -> None:
             "detail": r.get("detail", {}),
         }
 
-    # --- Trade -------------------------------------------------------------
+    # --- Record portfolio value --------------------------------------------
     price_map = {s: p["price"] for s, p in prices.items() if p.get("price")}
-    atrs = {s: (baskets["risk"].get(s) or {}).get("atr") for s in config.SYMBOLS}
-
     try:
-        actions = strategy.run_cycle(ratings, price_map, atrs, ts)
+        manual.record_equity(ts, price_map)
     except Exception as e:
-        log.exception("strategy cycle failed")
-        errors.append(f"strategy: {e}")
-        actions = []
-
-    eq = portfolio.record_equity(ts, price_map)
+        log.exception("equity recording failed")
+        errors.append(f"Equity history: {e}")
 
     # --- Publish -----------------------------------------------------------
     STATE.update({
         "cycle": cycle,
         "updated_at": ts,
         "assets": assets_view,
-        "actions": actions,
         "errors": errors,
-        "equity": eq,
         "running": True,
     })
     _publish()
 
-    log.info("cycle %d: %d assets rated, %d actions%s",
-             cycle, len(assets_view), len(actions),
+    log.info("cycle %d: %d assets rated%s",
+             cycle, len(assets_view),
              f", {len(errors)} errors" if errors else "")
 
 
 async def bootstrap() -> None:
-    """First-run backfill so ratings are meaningful within one cycle."""
-    have = db.query_one("SELECT COUNT(*) AS n FROM candles")
-    if (have or {}).get("n", 0) > 0:
-        log.info("candles already present, skipping backfill")
-        return
-    log.info("backfilling %d candles per asset...", config.CANDLE_LIMIT)
-    await refresh_candles()
-    log.info("backfill complete")
+    """First-run backfill so ratings and charts are useful within one cycle."""
+    hourly = db.query_one(
+        "SELECT COUNT(*) AS n FROM candles WHERE interval=?", (config.CANDLE_INTERVAL,))
+    if (hourly or {}).get("n", 0) == 0:
+        log.info("backfilling %d hourly candles per asset...", config.CANDLE_LIMIT)
+        await refresh_candles()
+
+    daily = db.query_one(
+        "SELECT COUNT(*) AS n FROM candles WHERE interval=?", (config.DAILY_INTERVAL,))
+    if (daily or {}).get("n", 0) == 0:
+        log.info("backfilling %d daily candles per asset...", config.DAILY_LIMIT)
+        await refresh_candles(config.DAILY_INTERVAL, config.DAILY_LIMIT)
 
 
 async def loop(stop: Callable[[], bool] | None = None) -> None:
     """Run until `stop()` returns True (or forever)."""
     db.connect()
     db.prune()
-    portfolio.cash()  # seed starting capital on first run
+    manual.cash()  # seed starting capital on first run
 
     await bootstrap()
 
@@ -238,7 +243,7 @@ async def loop(stop: Callable[[], bool] | None = None) -> None:
             await run_cycle(cycle)
         except Exception:
             log.exception("cycle %d failed", cycle)
-            STATE["errors"] = ["cycle failed; see logs"]
+            STATE["errors"] = ["Cycle failed; see the server log."]
 
         cycle += 1
         elapsed = time.monotonic() - started

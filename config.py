@@ -16,15 +16,20 @@ STATIC_DIR = BASE_DIR / "static"
 
 # --- Polling cadence -------------------------------------------------------
 
-CYCLE_SECONDS = 120
+CYCLE_SECONDS = 60
 
 # Candles and market-cap data move far slower than price, so they refresh on a
-# multiple of the base cycle to stay comfortably inside free-tier rate limits.
-KLINE_EVERY_N_CYCLES = 5      # ~10 min
-MARKET_EVERY_N_CYCLES = 4     # ~8 min
+# multiple of the base cycle. The multiples are chosen so the *wall-clock* rate
+# stays the same as it was at a 120s cycle -- lowering them risks 429s on the
+# free tiers.
+KLINE_EVERY_N_CYCLES = 10     # hourly candles ~every 10 min
+MARKET_EVERY_N_CYCLES = 8     # CoinGecko ~every 8 min
+DAILY_EVERY_N_CYCLES = 60     # daily candles ~every hour
 
 CANDLE_INTERVAL = "1h"
+DAILY_INTERVAL = "1d"
 CANDLE_LIMIT = 300            # enough history for EMA200 + 30d stats
+DAILY_LIMIT = 365             # a year of daily closes for long-range charts
 
 # --- Assets ----------------------------------------------------------------
 
@@ -107,31 +112,24 @@ GRADE_BANDS: list[tuple[float, str]] = [
 
 # --- Signals ---------------------------------------------------------------
 
-# The gap between BUY_THRESHOLD and EXIT_THRESHOLD is the hysteresis dead band.
-# Ratings recompute every 2 minutes; without this gap a composite hovering near
-# a single threshold would open and close positions on nearly every cycle.
+# The gap between BUY_THRESHOLD and EXIT_THRESHOLD is a hysteresis dead band.
+# Ratings recompute every cycle; without this gap a composite hovering near a
+# single threshold would flip its signal almost every minute.
 BUY_THRESHOLD = 70.0
 STRONG_BUY_THRESHOLD = 82.0
 EXIT_THRESHOLD = 45.0
 STRONG_SELL_THRESHOLD = 32.0
-MIN_HOLD_MINUTES = 30
 
 # --- Paper trading ---------------------------------------------------------
 
-STARTING_CAPITAL = 100_000.0
-RISK_PER_TRADE = 0.02          # fraction of equity risked per position
-
-# These two are coupled: MAX_POSITION_PCT * MAX_OPEN_POSITIONS must stay <= 1.0
-# or the position limit is unreachable, because cash runs out first and the
-# book silently caps below MAX_OPEN_POSITIONS. 0.12 * 8 = 0.96 leaves a small
-# cash buffer for fees.
-MAX_POSITION_PCT = 0.12        # hard cap on any single position
-MAX_OPEN_POSITIONS = 8
-STOP_ATR_MULT = 2.0
-TAKE_PROFIT_ATR_MULT = 3.0
-TRAILING_ATR_MULT = 2.0        # trailing stop distance once in profit
+STARTING_CAPITAL = 100_000.0   # default; the user picks theirs on the start screen
+CAPITAL_MIN = 100.0
+CAPITAL_MAX = 10_000_000.0
 FEE_RATE = 0.001               # 0.1% per side
-SLIPPAGE_RATE = 0.0005         # 5 bps assumed slippage per fill
+
+# --- Languages -------------------------------------------------------------
+
+SUPPORTED_LANGUAGES = ("en", "hy", "ru", "es")
 
 # --- Retention -------------------------------------------------------------
 

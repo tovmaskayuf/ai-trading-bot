@@ -1,0 +1,13 @@
+# One-click deployment blueprint for Render (free tier).
+# Visit https://render.com/deploy?repo=https://github.com/tovmaskayuf/ai-trading-bot
+# and Render reads this file to provision the service automatically.
+services:
+  - type: web
+    name: ai-crypto-trading-training
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4

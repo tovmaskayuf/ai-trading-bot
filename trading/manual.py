@@ -1,12 +1,12 @@
-"""Manual (user-driven) paper trading.
-
-Separate from the bot's own portfolio so the two track records can be compared
-on identical live data: does the algorithm actually beat you?
+"""The user's paper-trading portfolio.
 
 Modelled as holdings with an average cost basis rather than discrete positions.
 Buying more of something you already own averages into one line; selling books
 realised P&L against that average. This is how a brokerage account behaves, and
 it is what makes partial sells meaningful.
+
+Starting capital is whatever the user chose on the start screen (see
+settings.py); changing it there resets the portfolio to the new amount.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import logging
 
 import config
 import db
+import settings
 
 log = logging.getLogger("manual")
 
@@ -27,11 +28,16 @@ class TradeError(ValueError):
 
 # --- Cash ------------------------------------------------------------------
 
+def starting_capital() -> float:
+    return settings.get()["starting_capital"]
+
+
 def cash() -> float:
     raw = db.get_meta(CASH_KEY)
     if raw is None:
-        db.set_meta(CASH_KEY, str(config.STARTING_CAPITAL))
-        return config.STARTING_CAPITAL
+        capital = starting_capital()
+        db.set_meta(CASH_KEY, str(capital))
+        return capital
     return float(raw)
 
 
@@ -61,23 +67,23 @@ def buy(symbol: str, price: float, ts: int, *,
         usd: float | None = None, qty: float | None = None) -> dict:
     """Buy by dollar amount or quantity. Fees come out of cash on top of cost."""
     if symbol not in config.BY_SYMBOL:
-        raise TradeError(f"unknown symbol {symbol}")
+        raise TradeError(f"Unknown symbol: {symbol}.")
     if price <= 0:
-        raise TradeError("no live price available for this asset")
+        raise TradeError("No live price is available for this asset yet. Please try again shortly.")
 
     if usd is not None:
         # Interpret the dollar amount as all-in (cost + fee), so "spend $1000"
         # actually removes $1000 from cash rather than $1000 plus fees.
         if usd <= 0:
-            raise TradeError("amount must be greater than zero")
+            raise TradeError("The amount must be greater than zero.")
         gross = usd / (1 + config.FEE_RATE)
         qty = gross / price
     elif qty is not None:
         if qty <= 0:
-            raise TradeError("quantity must be greater than zero")
+            raise TradeError("The quantity must be greater than zero.")
         gross = qty * price
     else:
-        raise TradeError("specify either usd or qty")
+        raise TradeError("Specify either a dollar amount or a quantity.")
 
     fee = gross * config.FEE_RATE
     total = gross + fee
@@ -86,7 +92,7 @@ def buy(symbol: str, price: float, ts: int, *,
     # Absorb float dust so a "Max" button doesn't fail by a fraction of a cent.
     if total > available + 1e-6:
         raise TradeError(
-            f"insufficient cash: need ${total:,.2f}, have ${available:,.2f}"
+            f"Insufficient cash: this order requires ${total:,.2f}, but only ${available:,.2f} is available."
         )
     total = min(total, available)
 
@@ -122,22 +128,22 @@ def sell(symbol: str, price: float, ts: int, *,
     """Sell all or part of a holding. Realised P&L is booked against avg cost."""
     held = holding_for(symbol)
     if not held:
-        raise TradeError(f"you do not hold any {symbol}")
+        raise TradeError(f"You do not hold any {symbol}.")
     if price <= 0:
-        raise TradeError("no live price available for this asset")
+        raise TradeError("No live price is available for this asset yet. Please try again shortly.")
 
     if fraction is not None:
         if not 0 < fraction <= 1:
-            raise TradeError("fraction must be between 0 and 1")
+            raise TradeError("The fraction must be between 0 and 1.")
         qty = held["qty"] * fraction
     if qty is None:
-        raise TradeError("specify either qty or fraction")
+        raise TradeError("Specify either a quantity or a fraction.")
     if qty <= 0:
-        raise TradeError("quantity must be greater than zero")
+        raise TradeError("The quantity must be greater than zero.")
 
     # Tolerate float dust on a full sell rather than rejecting it.
     if qty > held["qty"] + 1e-9:
-        raise TradeError(f"you only hold {held['qty']:.8f} {symbol}")
+        raise TradeError(f"You only hold {held['qty']:.8f} {symbol}.")
     qty = min(qty, held["qty"])
 
     gross = qty * price
@@ -212,14 +218,15 @@ def snapshot(prices: dict[str, float]) -> dict:
     for r in rows:
         r["weight_pct"] = (r["value"] / total * 100) if total else 0.0
 
+    capital = starting_capital()
     return {
         "cash": c,
         "invested": invested,
         "market_value": market_value,
         "total": total,
-        "starting_capital": config.STARTING_CAPITAL,
-        "total_return_pct": (total / config.STARTING_CAPITAL - 1) * 100,
-        "total_pnl": total - config.STARTING_CAPITAL,
+        "starting_capital": capital,
+        "total_return_pct": (total / capital - 1) * 100 if capital else 0.0,
+        "total_pnl": total - capital,
         "unrealized_pnl": market_value - invested,
         "realized_pnl": realized,
         "fees_paid": fees_paid,
@@ -232,7 +239,22 @@ def snapshot(prices: dict[str, float]) -> dict:
     }
 
 
-def reset() -> None:
+def record_equity(ts: int, prices: dict[str, float]) -> None:
+    """Append one point to the portfolio's value history."""
+    s = snapshot(prices)
+    db.insert_manual_equity(
+        ts, s["cash"], s["invested"], s["market_value"],
+        s["total"], s["realized_pnl"], s["fees_paid"],
+    )
+
+
+def reset(capital: float | None = None) -> None:
+    """Clear holdings, trades and history, and restart from `capital`
+    (defaults to the capital chosen on the start screen)."""
+    if capital is None:
+        capital = starting_capital()
     db.reset_manual()
-    set_cash(config.STARTING_CAPITAL)
-    log.info("manual portfolio reset to %.2f", config.STARTING_CAPITAL)
+    set_cash(capital)
+    # Seed the history so charts begin at the starting amount immediately.
+    db.insert_manual_equity(db.now_ms(), capital, 0.0, 0.0, capital, 0.0, 0.0)
+    log.info("portfolio reset to %.2f", capital)

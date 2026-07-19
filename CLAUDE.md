@@ -2,116 +2,196 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## What this is
+
+**AI Crypto Trading and Training by TT** — a paper-trading trainer for 15
+cryptocurrencies. A 60-second polling engine collects live prices and computes
+a four-axis AI rating per asset; the user trades a virtual portfolio by hand
+through a Polymarket-styled web UI with an animated start screen, four
+languages, and time-range charts everywhere.
+
+**There is no automated trading.** An earlier iteration had a bot that traded
+its own portfolio against the user's ("versus bot"); that was removed
+deliberately at the user's request. The engine only collects data and rates.
+`trading/strategy.py`, `trading/portfolio.py`, the bot's `positions`/`trades`/
+`equity` tables, and `tests/test_strategy.py` are gone — do not resurrect them.
+`db.MIGRATIONS` drops the old bot tables from any pre-existing database.
+
 ## Git workflow — commit and push as you go
 
-**Commit each logical unit of work as soon as it is complete, and push to `origin` in the same pass.** Do not batch a session's work into one commit at the end, and do not leave finished work sitting uncommitted — the point is that there is always a restore point and the session's state survives even if the conversation is lost.
+**Commit each logical unit of work as soon as it is complete, and push to
+`origin` in the same pass.** Do not batch a session's work into one commit at
+the end — the point is that there is always a restore point and the session's
+state survives even if the conversation is lost.
 
-Repository: `tovmaskayuf/ai-trading-bot` on GitHub, branch `main`, HTTPS remote (`gh` is authenticated).
+Repository: `tovmaskayuf/ai-trading-bot` on GitHub (**public**), branch `main`,
+HTTPS remote (`gh` is authenticated).
 
-Practical rules:
-- Commit when a module, a fix, or a coherent slice of a feature works — not per file, not per session.
-- Run the indicator tests before committing anything under `analytics/`.
-- Subject line: imperative mood, under ~72 chars, describing what changed. Body: explain **why** — the constraint, tradeoff, or upstream API quirk that motivated it. Existing commits set the standard; match them.
-- Push after committing. `git status -sb` showing `## main...origin/main` with no ahead marker means synced.
-- Never commit `.venv/`, `data/`, or `.claude/settings.local.json` — `.gitignore` covers these.
+- Commit when a module, fix, or coherent feature slice works — not per file.
+- Run both test scripts before committing anything under `analytics/`,
+  `trading/`, or `settings.py`.
+- Subject: imperative, under ~72 chars. Body: explain **why** — the constraint
+  or upstream quirk that motivated the change. Match existing commits.
+- Never commit `.venv/`, `data/`, `*.log`, or `.claude/settings.local.json` —
+  `.gitignore` covers these.
 
-Be aware that files may appear or change between your tool calls: this project has been developed with parallel edits happening outside your own writes. Re-check `git status` before assuming your view of the tree is current, and never force-push or discard work you did not write.
+Files may change between your tool calls — this project is developed with
+parallel edits happening outside your own writes, and stale processes have
+bitten before (two uvicorns once shared one log file and one crashed against a
+migrated schema). Re-check `git status` before assuming your view is current;
+`pkill -9 -f uvicorn` before restarting the server; never force-push.
 
 ## Environment
 
-Python 3.14 in a local venv. Dependencies were installed ad hoc — there is **no `requirements.txt`**, and no pytest/ruff/black/mypy. Installed: `fastapi`, `uvicorn`, `httpx`, `pydantic`.
+Python 3.14 in a local venv. `requirements.txt` exists (fastapi, uvicorn,
+httpx). No pytest/ruff/black — the test files are **plain scripts** that print
+PASS/FAIL per assertion and exit non-zero on failure.
 
 ```bash
-.venv/bin/python tests/test_indicators.py    # test suite — exits 1 on failure
-.venv/bin/python -c "import config, db; from providers import binance"   # import smoke check
+.venv/bin/python tests/test_indicators.py    # indicator correctness
+.venv/bin/python tests/test_manual.py        # portfolio accounting + settings guards
+.venv/bin/python -m uvicorn server:app --port 8000   # run everything
 ```
 
-The test suite is a **plain script, not pytest** — it prints PASS/FAIL per assertion and exits non-zero if any fail. Add cases by calling `check(name, got, want, tol)` at module level. There is no way to run a single test in isolation; the file is fast enough that this doesn't matter.
+Always run from the project root. Tests point `config.DB_PATH` at a scratch
+temp file **before** importing `db`, so they never touch real state — preserve
+that pattern in new tests.
 
-Always run from the project root — `tests/test_indicators.py` inserts the parent directory onto `sys.path` itself, but the provider and analytics imports assume root-relative resolution.
-
-**The directory name contains `}{`** (`ai_trading}{bot`). Braces break unquoted shell paths — always quote it in `cd`, `find`, and redirects. This is why the GitHub repo is named `ai-trading-bot` instead; GitHub rejects brace characters.
-
-## Current state
-
-Built and committed:
-
-| Layer | Files | Status |
-|---|---|---|
-| Config / asset registry | `config.py` | Done |
-| Persistence | `db.py` | Done |
-| Providers | `providers/{base,binance,hyperliquid,coingecko}.py` | Done |
-| Indicators | `analytics/indicators.py` + tests | Done, tests passing |
-| Rating engine | `analytics/rating.py` | Done, **no tests yet** |
-
-Not yet written:
-- **Polling engine** — the cycle loop that drives `CYCLE_SECONDS`, calls providers on their staggered cadences, writes snapshots/candles, invokes `rate_asset`, and persists ratings.
-- **Paper-trading strategy** — consumes signals and the `RISK_PER_TRADE` / `MAX_POSITION_PCT` / ATR-stop parameters in `config.py`; writes `positions`, `trades`, `equity`. The DB schema and every tuning constant already exist for this; only the logic is missing.
-- **FastAPI server + dashboard** — `fastapi`/`uvicorn` are installed and `config.STATIC_DIR` is referenced, but neither the app nor `static/` exists.
-
-`data/` does not exist in the tree; `db.connect()` creates it on first call.
+**The directory name contains `}{`** (`ai_trading}{bot`). Braces break
+unquoted shell paths — always quote it. This is why the GitHub repo is named
+`ai-trading-bot`; GitHub rejects brace characters.
 
 ## Architecture
 
 ### Asset registry drives everything
 
-**`config.py` is the single source of truth for asset routing.** The `ASSETS` registry maps each internal symbol (`BTC`) onto per-provider identifiers (`binance_symbol="BTCUSDT"`, `coingecko_id="bitcoin"`, `hyperliquid_coin`). Provider selection derives from which identifiers are populated, via `Asset.price_source`. No module should branch on a symbol name directly — to add an asset, add a row and nothing else changes.
+`config.ASSETS` maps each internal symbol (`BTC`) onto per-provider
+identifiers; provider selection derives from which identifiers are populated
+via `Asset.price_source`. No module branches on a symbol name. HYPE is the
+asset that exercises this: not listed on Binance spot (`HYPEUSDT` → error
+`-1121`), so it routes to Hyperliquid. Any code assuming "all assets are on
+Binance" breaks on HYPE specifically.
 
-HYPE is the asset that exercises this indirection: not listed on Binance spot (`HYPEUSDT` → error `-1121`), so it carries `hyperliquid_coin` instead and routes to Hyperliquid. Any code assuming "all assets are on Binance" breaks on HYPE specifically.
+### Settings (`settings.py`)
 
-### Providers
+Start-screen choices — `followed` assets, `starting_capital`, `language` —
+stored as one JSON blob in the `meta` table. `settings.save()` validates
+(capital $100–$10M, followed ⊆ registry and non-empty, language in
+`config.SUPPORTED_LANGUAGES`) and always stamps `initialized=True`. **Changing
+`starting_capital` resets the portfolio** (`server.save_settings` compares
+before/after); changing language or followed assets never does. The engine
+tracks and rates **all 15** regardless of selection — `followed` only gates the
+UI and trade permission — so switching an asset back on has full history.
 
-Stateless async modules over one shared `httpx.AsyncClient` (`providers/base.py`). Each returns dicts keyed by **internal symbol**, never by exchange pair — pair→symbol translation belongs in the provider, not the caller.
+### Providers (`providers/`)
 
-Retry policy in `base.request` is deliberate: transport errors, 429 and 5xx retry with exponential backoff; any other 4xx raises `ProviderError(permanent=True)` and fails immediately, because retrying a bad symbol only burns rate-limit budget.
+Stateless async modules over one shared `httpx.AsyncClient`. Retry policy in
+`base.request` is deliberate: transport errors, 429 and 5xx retry with
+backoff; other 4xx raise `ProviderError(permanent=True)` immediately.
+Binance batch endpoints (`symbols=` param) need **compact JSON** —
+`json.dumps` with its default `", "` separator triggers error `-1100`
+(`_encode` in `providers/binance.py` exists for this).
 
-The three providers have genuinely different shapes:
-- **Binance** — primary price/candles for 14 of 15. Batches all pairs into one call (`tickers_24h`, `book_tickers`); explicit `limit` on klines.
-- **Hyperliquid** — single POST URL discriminated by a `type` field. `allMids` returns ~900 coins and gives **price only**, no 24h change or volume, so callers must backfill from candles or CoinGecko. Its candle endpoint has no `limit`; the window is a time range derived from interval size × count.
-- **CoinGecko** — market cap, volume and 24h change for all 15 in one `/simple/price` call, plus the price fallback when Binance is down. Its `rank` is computed **within our own 15-asset basket**, not CoinGecko's global rank — a basket-relative rank is what the structure score actually wants, and the global rank needs a heavier endpoint.
+Hyperliquid quirks: one POST URL discriminated by a `type` field; `allMids`
+gives price only (no 24h change — the engine backfills it from CoinGecko or
+candles); its candle endpoint takes a time range, not a `limit`.
 
-### Storage
+CoinGecko `rank` is computed **within our 15-asset basket**, not globally.
 
-**SQLite in WAL mode**, so the polling engine can write while the HTTP server reads concurrently. One process-wide connection, created lazily with `check_same_thread=False`; schema applied idempotently on first `connect()`. All timestamps are **epoch milliseconds UTC** to match the upstream APIs — never seconds.
+### Storage (`db.py`)
 
-Writers are upsert-shaped: `upsert_candles` rewrites the in-progress candle on every refresh, so refetching an overlapping window is safe and idempotent.
+SQLite in WAL mode; epoch-millisecond timestamps everywhere. Tables:
+`candles` (1h and 1d rows distinguished by `interval`), `snapshots`,
+`ratings`, `manual_holdings`, `manual_trades`, `manual_equity`, `meta`.
+`manual_equity` is the portfolio-over-time series behind every chart — one row
+per cycle plus one per trade, **never pruned**. `manual_equity_series()`
+downsamples by keeping the *last* row per time bucket (right for value curves;
+averaging would smooth away the moves). `prune()` trims only
+`snapshots`/`ratings` past 90 days.
 
-`prune()` drops only `snapshots` and `ratings` past `RETENTION_DAYS`; candles, trades and equity are kept indefinitely. `reset_portfolio()` wipes simulated trading state but preserves market data.
+### Engine (`engine.py`)
 
-### Indicators
+One asyncio loop: fetch → snapshot → rate → `manual.record_equity` → publish
+to SSE subscribers. Failure in any provider degrades that cycle rather than
+killing the service. `bootstrap()` backfills 300×1h and 365×1d candles on
+first run. The rating's `holding` flag comes from `manual.holding_for()` — the
+*user's* holdings — which is what makes the HOLD signal mean "you own this."
 
-`analytics/indicators.py` is **deliberately dependency-free** — plain Python lists, no numpy/pandas. 15 assets × a few hundred candles is trivial compute, and avoiding compiled wheels keeps installs working on new Python releases (relevant here: this is Python 3.14). Do not introduce numpy to this module.
+### Rating engine (`analytics/`)
 
-Every function **returns `None` on insufficient data rather than raising**, so a cold start degrades gracefully instead of crashing the engine. Preserve this contract in new indicators — callers rely on it throughout `rating.py`.
+`indicators.py` is **deliberately dependency-free** (no numpy — new-Python
+wheel risk) and every function returns `None` on insufficient data; preserve
+both contracts. `rating.py` scores four axes 0–100. Risk and parts of
+Structure are **percentile-ranked within the basket** — absolute bands proved
+regime-dependent (in a quiet market every composite collapsed and BUY never
+fired; this was a real calibration bug). Sub-scores are stored raw so the
+dashboard recombines them client-side under user weights; the JS `composite()`
+in `dashboard.html` must stay in exact agreement with
+`rating.composite_score()` including missing-axis renormalisation — there is a
+JSC cross-check pattern in the repo history for verifying this.
 
-`scale(value, lo, hi, invert=False)` is the shared primitive mapping raw values onto 0–100 with clamping; `invert=True` is for metrics where smaller is better. `pct_rank` gives percentile standing within a population.
+Signals: hysteresis between `BUY_THRESHOLD` (70) and `EXIT_THRESHOLD` (45);
+the band is one knob, not two. `HOLD` = user holds it (or it just cooled from
+BUY); `NEUTRAL` = flat. Do not feed `HOLD` back into the carry-forward
+condition in `signal_for` — that makes it self-sustaining and `NEUTRAL`
+unreachable (past bug).
 
-### Rating engine
+### Portfolio (`trading/manual.py`)
 
-`analytics/rating.py` scores four axes, each 0–100, then composes them.
+Holdings model with **average cost basis** (fees included in basis), not
+discrete lots. Buys interpret `usd` as all-in (cost + fee). Guards raise
+`TradeError` with user-facing, properly punctuated messages — the server
+passes them straight through as HTTP 400 detail. A flat round-trip must lose
+exactly the fees; `tests/test_manual.py` asserts this.
 
-**Sub-scores are stored raw** (see the `ratings` table) so the dashboard can recombine them under user-chosen weights without a server round-trip. Composite, grade and signal are always derived, never stored inputs.
+### Server (`server.py`)
 
-- **Momentum** — RSI on 1h and synthetic 4h (`closes[::-1][::4][::-1]`, reversed twice to keep the *most recent* bar aligned rather than the oldest), MACD histogram sign plus slope, EMA 20/50/200 stacking, and range position. RSI above ~70 is scored *down*, not up — overbought is a risk, not strength. A timeframe-agreement bonus applies when 1h and 4h RSI lean the same way.
-- **Risk** — ATR%, realized vol and max drawdown are **percentile-ranked against the basket then inverted**, so scores stay meaningful regardless of market regime. Sharpe is the exception: scored absolutely, since it is already normalised. Higher score = lower risk.
-- **Structure** — basket rank, turnover (volume/mcap, where both very low and extreme readings score poorly), 24h volume vs the 7d baseline, and bid/ask spread.
-- **Relative** — returns vs BTC and percentile within the basket across 24h/7d/30d. The benchmark scores neutral against itself by definition. A "rotating in" bonus fires when short-horizon standing exceeds long-horizon by >20 points.
+`RANGES` maps `1h|24h|7d|30d|1y|all` to cutoffs; history endpoints downsample
+server-side to ~360 points. `/api/asset/{s}/prices` picks resolution by range
+(snapshots → 1h candles → 1d candles) and appends the live price so lines end
+at "now". Trade prices are resolved **server-side** so a stale tab cannot
+fill at an old quote. `/api/overview` re-stamps `followed`/`held` flags at
+read time because the engine's copy is up to a minute stale.
 
-`composite_score` drops missing axes and **renormalises the remaining weights**, so an asset with partial data still rates instead of returning `None`.
+### Frontend (`static/dashboard.html`)
 
-Each scorer returns `(score, detail)` where `detail` is the drill-down payload the dashboard renders. Keep populating it — it is the only explanation of *why* a rating moved.
+One self-contained file, no CDN, no build step: animated landing (language
+pills, 15 asset switches, capital input), Markets and Portfolio views, a
+clickable stat sub-page per tile (Cash / Invested / Unrealized / Realized /
+Fees), buy/sell drawer, SSE live updates, light/dark themes.
 
-## Tuning constraints
+- **i18n**: `I18N` dict with `en`/`hy`/`ru`/`es`, 130 keys each — keep the
+  four languages in exact key parity when adding strings (there is a JSC
+  parity-check pattern in repo history). `t(key, vars)` does `{var}`
+  templating. The brand name "AI Crypto Trading and Training by TT" is never
+  translated.
+- **Charts**: hand-rolled SVG (`lineChart`), crosshair+tooltip, range pills via
+  `rangePills()`. Axis colors are the four validated categorical slots from
+  the dataviz skill — every use is direct-labeled, never color-alone.
+- The drawer defers re-renders while the user is typing an amount
+  (`drawerBusy()`), or a cycle update would wipe their input mid-trade.
 
-These encode reasoning not obvious from the numbers:
+## Cadence constraints
 
-- **Cadence** — `CYCLE_SECONDS = 120` is the base tick. Candles (`KLINE_EVERY_N_CYCLES`) and market cap (`MARKET_EVERY_N_CYCLES`) refresh on multiples of it specifically to stay inside free-tier rate limits. Lowering these risks 429s.
-- **`DEFAULT_WEIGHTS` must sum to 1.0** across momentum/risk/structure/relative.
-- **The gap between `BUY_THRESHOLD` (70) and `EXIT_THRESHOLD` (45) is a hysteresis dead band**, not two independent knobs. Ratings recompute every 2 minutes; narrowing the gap makes a composite hovering near one threshold churn positions almost every cycle. `MIN_HOLD_MINUTES` backstops the same problem in the time dimension, and `signal_for` implements the band.
-- `CANDLE_LIMIT = 300` is sized for EMA200 plus 30-day statistics — shrinking it silently degrades those indicators.
-- `score_momentum` needs ≥60 closes and `risk_metrics` ≥30, so a cold start produces `None` axes until enough candles accumulate. This is expected, not a bug.
+`CYCLE_SECONDS = 60`. The stagger multiples are sized so the **wall-clock**
+rates stay at the values that were safe at the old 120s cycle: klines every
+10th cycle (~10 min), CoinGecko every 8th (~8 min), daily candles every 60th
+(~hourly). Lowering the multiples risks free-tier 429s.
 
-## Known issues
+## Deployment
 
-- `rating.py:288` — in `signal_for`, the final `if holding or prev_signal in (...)` branch and the fallthrough both return `"HOLD"`, so the condition is dead code. Harmless today, but it likely intended to distinguish holding from neutral. Resolve before the strategy layer starts depending on signal semantics.
-- `analytics/rating.py` has no test coverage. `test_indicators.py` covers only the indicator primitives.
+`render.yaml` deploys to Render's free tier (deploy-button URL in README).
+Free-tier realities: instance sleeps when idle, disk is ephemeral (portfolio
+resets on restart), and the app keeps **one portfolio per instance** — no user
+accounts. Per-visitor portfolios are the known next step if a shared public
+instance is wanted. A claude.ai Artifact cannot host this: the artifact CSP
+blocks external fetches (no network capability on this account), so live
+prices are unreachable from an artifact page.
+
+## Known issues / expectations
+
+- Cold start: some axes read "—" until candles accumulate (`score_momentum`
+  needs ≥60 closes, `risk_metrics` ≥30). Expected.
+- `snapshots` grows ~21.6k rows/day at the 60s cycle; pruned at 90 days.
+- Equity history accumulates only while the server runs — gaps in the
+  portfolio charts mean the process was down, not a bug.

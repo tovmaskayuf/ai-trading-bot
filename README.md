@@ -1,161 +1,153 @@
-# AI Crypto Trading Bot
+# AI Crypto Trading and Training by TT
 
-A continuously-running bot that tracks 15 cryptocurrencies, rates each one across
-four analytical axes every two minutes, and trades a **simulated** portfolio off
-those ratings. Ships with an interactive browser dashboard.
+A crypto paper-trading trainer with live market data and AI-powered ratings.
+Pick your assets and starting capital on an animated start screen, then trade a
+virtual portfolio against real prices — zero risk, real skills.
 
-**Paper trading only.** No exchange account, no API keys, no real money. The
-portfolio is virtual capital marked against live prices.
+- **15 assets** — BTC, ETH, SOL, BNB, XRP, LINK, SUI, AVAX, TRX, ADA, ARB,
+  ONDO, TAO, HYPE, DOGE — with live prices refreshed **every 60 seconds**
+- **Four-axis AI rating** per asset (0–100): Momentum, Risk, Structure,
+  Relative Strength — combined into a composite score, letter grade, and signal
+- **Paper trading** with an average-cost-basis portfolio, realistic 0.10% fees,
+  P&L tracking, and full trade history
+- **Interactive charts everywhere** — portfolio value, every stat, every asset —
+  each switchable between 1H / 24H / 1W / 1M / 1Y / All
+- **Four languages** — English, Հայերեն, Русский, Español
+- Light and dark themes, single self-contained web UI, no build step
 
 ## Quick start
 
 ```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
 .venv/bin/python -m uvicorn server:app --port 8000
 ```
 
-Then open <http://localhost:8000>. One process runs both the polling engine and
-the dashboard.
+Open <http://localhost:8000>. The start screen walks you through language,
+asset selection, and starting capital; the engine begins collecting live data
+immediately. One process runs both the data engine and the web interface.
 
-### Run it always-on in the background
+To keep it running in the background:
 
 ```bash
 nohup .venv/bin/python -m uvicorn server:app --port 8000 > bot.log 2>&1 &
 ```
 
-The engine keeps polling and building rating history whether or not the
-dashboard is open. State lives in `data/bot.db`, so restarts resume rather
-than reset.
+## Put it on the public internet
 
-## Tracked assets
+The repository is public — anyone can run their own instance with the three
+commands above. To host a public URL, the included [`render.yaml`](render.yaml)
+deploys it to Render's free tier in a few clicks:
 
-BTC · ETH · SOL · BNB · XRP · LINK · SUI · AVAX · TRX · ADA · ARB · ONDO · TAO ·
-HYPE · DOGE
+1. Open **<https://render.com/deploy?repo=https://github.com/tovmaskayuf/ai-trading-bot>**
+2. Sign in (free), confirm, and Render builds and starts the service
+3. Your instance is live at `https://<your-service>.onrender.com`
 
-Routing is driven entirely by the registry in `config.py` — to add an asset, add
-a row, and nothing else changes.
+Free-tier honesty notes:
+
+- The instance **sleeps after ~15 minutes idle** and wakes on the next visit
+  (the first load takes ~30 seconds while it spins up).
+- Free instances have **no persistent disk** — the portfolio and collected
+  history reset whenever the instance restarts. Fine for practice; add a paid
+  disk if you want history to survive.
+- The app currently keeps **one portfolio per instance** (no accounts), so a
+  shared public URL shares one portfolio among its visitors. Per-visitor
+  portfolios are a planned next step.
+
+## Data sources — no API keys required
 
 | Source | Role |
 |---|---|
-| Binance public REST | Price, 24h stats, OHLC candles, order book — 14 of 15 |
+| Binance public REST | Prices, 24h stats, hourly + daily candles, order book — 14 of 15 assets |
 | Hyperliquid public API | **HYPE only** — it is not listed on Binance spot (`HYPEUSDT` → `-1121`) |
-| CoinGecko free | Market cap, rank, global volume; also the price fallback |
-
-No API keys are required for any of them.
+| CoinGecko free | Market capitalization, basket rank, volume; price fallback |
 
 ## The rating system
 
-Each asset gets four sub-scores from 0–100, blended into a composite, a letter
-grade (A+ → F) and a signal.
+Each asset receives four sub-scores from 0–100, blended into a weighted
+composite, a letter grade (A+ → F), and a signal.
 
 | Axis | Default weight | What it measures |
 |---|---|---|
 | **Momentum** | 30% | RSI (1h + 4h), MACD histogram and slope, EMA 20/50/200 stacking, range position |
-| **Risk** | 25% | ATR%, realized volatility, max drawdown, Sharpe — *inverted*, so lower risk scores higher |
+| **Risk** | 25% | ATR%, realized volatility, max drawdown, Sharpe — *inverted*: lower risk scores higher |
 | **Structure** | 25% | Basket rank, turnover, volume trend, bid/ask spread |
-| **Relative** | 20% | Returns vs BTC and percentile within the basket, across 24h/7d/30d |
+| **Relative Strength** | 20% | Returns versus BTC and percentile within the basket across 24h/7d/30d |
 
-Several axes are scored **relative to the basket** rather than against fixed
-thresholds. That is deliberate: absolute bands are regime-dependent, and in a
-quiet market every asset's raw turnover sits at the bottom of any fixed range,
-collapsing the axis and dragging every composite down with it.
+Several axes are scored **relative to the 15-asset basket** rather than against
+fixed thresholds — absolute bands are regime-dependent, and in a quiet market
+they collapse every score toward zero.
 
-Sub-scores are stored raw, so the dashboard's weight sliders recompute the
-composite in the browser with no server round-trip. That client-side formula is
-cross-checked against `analytics/rating.py` — both must agree exactly.
+Sub-scores are stored raw, so the **Rating Weights** sliders recompute the
+composite instantly in your browser. The client-side formula is cross-checked
+against `analytics/rating.py` and matches exactly.
 
-### Signals and the dead band
+Signals use hysteresis: **Buy** requires the composite to cross above 70, and
+the signal does not flip to **Sell** until it falls to 45. The dead band
+between prevents a score hovering near one threshold from flapping every
+minute. *Holding* marks an asset you own; *Neutral* means genuinely flat.
 
-`BUY` requires the composite to cross **above 70**; exit requires it to fall to
-**45**. The gap between them is a hysteresis dead band, not two independent
-knobs — ratings recompute every two minutes, and a single threshold would make
-any asset hovering near it churn positions on nearly every cycle.
-`MIN_HOLD_MINUTES` backstops the same problem in the time dimension.
+## Trading
 
-The regression test for this feeds a composite oscillating around the buy
-threshold for 60 cycles and asserts it produces **1 trade, not 60**.
-
-## Two portfolios
-
-There are two independent $100,000 virtual portfolios, both marked against the
-same live prices:
-
-- **My Portfolio** — you trade it. Click any coin, buy with a dollar amount or
-  sell part of a holding, and watch P&L move.
-- **Bot** — the algorithm trades it automatically off its own signals.
-
-They are deliberately separate so you can see whether the bot actually beats you
-over the same period. Resetting one does not touch the other.
-
-Manual trading uses an **average cost basis**: buying more of something you
-already hold averages into one line rather than opening a second lot, and
-selling books realised P&L against that average. Fees (0.1% per side) apply to
-both portfolios, so a flat round-trip loses exactly the fees rather than
-breaking even.
-
-## Bot paper trading
-
-- $100,000 virtual starting capital
-- **Sizing:** risk 2% of equity per trade, quantity derived from the ATR stop
-  distance, so a volatile asset gets a smaller position for the same dollar risk
-- **Exits:** 2×ATR stop-loss, 3×ATR take-profit, a trailing stop that only ever
-  ratchets up, or a rating-driven exit below 45
-- **Costs:** 0.1% fee per side plus 5bp slippage, so P&L isn't fantasy
-- Every trade records *why* the bot took it
-
-> `MAX_POSITION_PCT × MAX_OPEN_POSITIONS` must stay ≤ 1.0. Otherwise cash runs
-> out before the position limit is reached and the book silently caps below
-> `MAX_OPEN_POSITIONS`. There is a test asserting this invariant.
+- Starting capital is whatever you chose on the start screen ($100 – $10M);
+  changing it later resets the portfolio.
+- **Average cost basis**, like a real brokerage: buying more of a holding
+  averages into one line; partial sells book realized P&L against that average.
+- **0.10% fee per side** — a flat round-trip loses exactly the fees, so results
+  do not flatter you.
+- Trade prices are always taken server-side from the latest cycle; a stale
+  browser tab cannot fill at an old quote.
 
 ## Tests
 
 ```bash
-.venv/bin/python tests/test_indicators.py   # indicator correctness
-.venv/bin/python tests/test_strategy.py     # trading safety rules
+.venv/bin/python tests/test_indicators.py   # indicator correctness (RSI, MACD, EMA, ATR…)
+.venv/bin/python tests/test_manual.py       # portfolio accounting and settings guards
 ```
 
-Both are plain scripts, not pytest — they print PASS/FAIL per assertion and exit
+Plain scripts, not pytest — they print PASS/FAIL per assertion and exit
 non-zero on failure. Run from the project root.
 
 ## API
 
-| Endpoint | Returns |
+| Endpoint | Purpose |
 |---|---|
-| `GET /api/overview` | All 15 with prices, sub-scores, composites, signals |
-| `GET /api/asset/{symbol}` | Candles, rating history, indicator drill-down, position |
-| `GET /api/portfolio` | Bot stats, open positions, trade log, equity curve |
-| `GET /api/manual` | Your holdings, cash, P&L and trade history |
+| `GET /api/overview` | All assets with prices, sub-scores, composites, signals |
+| `GET /api/settings` · `POST /api/settings` | Start-screen preferences (language, assets, capital) |
+| `GET /api/asset/{symbol}` | Live detail, rating breakdown, holding |
+| `GET /api/asset/{symbol}/prices?range=1h\|24h\|7d\|30d\|1y\|all` | Price series at range-appropriate resolution |
+| `GET /api/asset/{symbol}/ratings?range=…` | Composite-score history |
+| `GET /api/manual` | Portfolio: holdings, cash, P&L, trades |
 | `POST /api/manual/trade` | Buy (`usd` or `qty`) / sell (`qty` or `fraction`) |
+| `GET /api/manual/history?range=…` | Portfolio value/cash/invested/realized/fees over time |
+| `POST /api/manual/reset` | Reset the portfolio to starting capital |
 | `POST /api/weights` | Re-score under custom axis weights |
-| `GET /api/stream` | SSE — one message per completed cycle |
-| `POST /api/portfolio/reset` | Wipe the bot's trading state (market data preserved) |
-| `POST /api/manual/reset` | Wipe your portfolio back to $100k |
-| `GET /api/health` | Engine liveness and cycle count |
-
-Trade prices are always taken server-side from the latest cycle, so a stale
-browser tab cannot fill at an old quote.
+| `GET /api/stream` | Server-sent events — one message per completed cycle |
+| `GET /api/health` | Engine liveness |
 
 ## Layout
 
 ```
-config.py               asset registry, weights, thresholds, capital
-db.py                   SQLite (WAL mode) schema and helpers
-providers/              binance · hyperliquid · coingecko, behind one interface
-analytics/indicators.py EMA, RSI, MACD, ATR, vol, drawdown, Sharpe — no numpy
+config.py               asset registry, cadence, thresholds, capital bounds, languages
+settings.py             user preferences (assets, capital, language), stored in SQLite
+db.py                   SQLite (WAL) schema, migrations, history queries
+providers/              binance · hyperliquid · coingecko behind one interface
+analytics/indicators.py EMA, RSI, MACD, ATR, vol, drawdown, Sharpe — dependency-free
 analytics/rating.py     four axes → composite → grade → signal
-trading/                portfolio accounting and the strategy rules
-engine.py               the 120s polling loop
-server.py               FastAPI: REST + SSE + dashboard
-static/dashboard.html   the whole UI, one self-contained file
+trading/manual.py       the portfolio: holdings, trades, equity history
+engine.py               60-second polling loop (no automated trading)
+server.py               FastAPI: REST + SSE + static dashboard
+static/dashboard.html   the entire UI — start screen, markets, portfolio — one file
+render.yaml             one-click Render deployment blueprint
 ```
 
 ## Notes
 
 - Indicators are **deliberately dependency-free** — plain Python lists, no
-  numpy/pandas. 15 assets × a few hundred candles is trivial compute, and this
-  keeps installs working on new Python releases where compiled wheels lag.
-- Indicator functions return `None` on insufficient data rather than raising, so
-  a cold start degrades gracefully. `score_momentum` needs ≥60 closes and
-  `risk_metrics` ≥30, so some axes read `—` until enough candles accumulate.
-  That is expected, not a bug.
+  numpy/pandas — so installs keep working on brand-new Python releases.
+- Indicator functions return `None` on insufficient data; on a cold start some
+  axes read "—" until enough candles accumulate. Expected, not a bug.
+- The engine only collects data and rates assets. **It never trades** — every
+  trade in the portfolio is one you made.
 - The directory name contains `}{`, which breaks unquoted shell paths — always
   quote it. (The GitHub repo is `ai-trading-bot`; GitHub rejects braces.)

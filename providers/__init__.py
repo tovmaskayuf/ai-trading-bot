@@ -64,12 +64,13 @@ async def fetch_prices() -> dict[str, dict[str, Any]]:
     return merged
 
 
-async def fetch_candles(symbol: str) -> list[tuple]:
+async def fetch_candles(symbol: str, interval: str = config.CANDLE_INTERVAL,
+                        limit: int = config.CANDLE_LIMIT) -> list[tuple]:
     """OHLCV for one symbol from whichever provider owns it."""
     asset = config.BY_SYMBOL[symbol]
     if asset.price_source == "hyperliquid":
-        return await hyperliquid.candles(symbol)
-    return await binance.klines(symbol)
+        return await hyperliquid.candles(symbol, interval, limit)
+    return await binance.klines(symbol, interval, limit)
 
 
 async def fetch_market() -> dict[str, dict[str, Any]]:
