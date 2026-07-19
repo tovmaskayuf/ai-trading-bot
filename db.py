@@ -1,0 +1,264 @@
+"""SQLite persistence.
+
+WAL mode so the engine can write while the HTTP server reads concurrently.
+All timestamps are epoch milliseconds (UTC) to match the upstream APIs.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+import time
+from contextlib import contextmanager
+from typing import Any, Iterator
+
+import config
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS candles (
+    symbol     TEXT NOT NULL,
+    interval   TEXT NOT NULL,
+    open_time  INTEGER NOT NULL,
+    o REAL, h REAL, l REAL, c REAL, v REAL,
+    PRIMARY KEY (symbol, interval, open_time)
+);
+
+CREATE TABLE IF NOT EXISTS snapshots (
+    symbol     TEXT NOT NULL,
+    ts         INTEGER NOT NULL,
+    price      REAL,
+    chg_24h    REAL,
+    volume_24h REAL,
+    mcap       REAL,
+    rank       INTEGER,
+    stale      INTEGER DEFAULT 0,
+    PRIMARY KEY (symbol, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
+
+CREATE TABLE IF NOT EXISTS ratings (
+    symbol     TEXT NOT NULL,
+    ts         INTEGER NOT NULL,
+    momentum   REAL,
+    risk       REAL,
+    structure  REAL,
+    relative   REAL,
+    composite  REAL,
+    grade      TEXT,
+    signal     TEXT,
+    PRIMARY KEY (symbol, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_ratings_ts ON ratings(ts);
+
+CREATE TABLE IF NOT EXISTS positions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol       TEXT NOT NULL,
+    qty          REAL NOT NULL,
+    entry_price  REAL NOT NULL,
+    entry_ts     INTEGER NOT NULL,
+    stop         REAL,
+    take_profit  REAL,
+    high_water   REAL,
+    status       TEXT NOT NULL DEFAULT 'open',
+    rationale    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+
+CREATE TABLE IF NOT EXISTS trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id INTEGER,
+    symbol      TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    qty         REAL NOT NULL,
+    price       REAL NOT NULL,
+    ts          INTEGER NOT NULL,
+    fee         REAL DEFAULT 0,
+    pnl         REAL,
+    pnl_pct     REAL,
+    exit_reason TEXT,
+    rationale   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts);
+
+CREATE TABLE IF NOT EXISTS equity (
+    ts              INTEGER PRIMARY KEY,
+    cash            REAL,
+    positions_value REAL,
+    total           REAL,
+    drawdown_pct    REAL
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
+
+def now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+_conn: sqlite3.Connection | None = None
+
+
+def connect() -> sqlite3.Connection:
+    """Return the process-wide connection, creating the schema on first call."""
+    global _conn
+    if _conn is None:
+        config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+        _conn.row_factory = sqlite3.Row
+        _conn.execute("PRAGMA journal_mode=WAL")
+        _conn.execute("PRAGMA synchronous=NORMAL")
+        _conn.executescript(SCHEMA)
+        _conn.commit()
+    return _conn
+
+
+@contextmanager
+def tx() -> Iterator[sqlite3.Connection]:
+    conn = connect()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def query(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+    return [dict(r) for r in connect().execute(sql, params).fetchall()]
+
+
+def query_one(sql: str, params: tuple = ()) -> dict[str, Any] | None:
+    row = connect().execute(sql, params).fetchone()
+    return dict(row) if row else None
+
+
+# --- Writers ---------------------------------------------------------------
+
+
+def upsert_candles(symbol: str, interval: str, rows: list[tuple]) -> None:
+    """rows: (open_time, o, h, l, c, v). Idempotent -- the in-progress candle
+    gets rewritten with fresh values on each refresh."""
+    if not rows:
+        return
+    with tx() as conn:
+        conn.executemany(
+            "INSERT INTO candles (symbol, interval, open_time, o, h, l, c, v) "
+            "VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(symbol, interval, open_time) DO UPDATE SET "
+            "o=excluded.o, h=excluded.h, l=excluded.l, c=excluded.c, v=excluded.v",
+            [(symbol, interval, *r) for r in rows],
+        )
+
+
+def insert_snapshot(symbol: str, ts: int, price: float | None, chg_24h: float | None,
+                    volume_24h: float | None, mcap: float | None, rank: int | None,
+                    stale: bool = False) -> None:
+    with tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO snapshots "
+            "(symbol, ts, price, chg_24h, volume_24h, mcap, rank, stale) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (symbol, ts, price, chg_24h, volume_24h, mcap, rank, int(stale)),
+        )
+
+
+def insert_rating(symbol: str, ts: int, r: dict[str, Any]) -> None:
+    with tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO ratings "
+            "(symbol, ts, momentum, risk, structure, relative, composite, grade, signal) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (symbol, ts, r.get("momentum"), r.get("risk"), r.get("structure"),
+             r.get("relative"), r.get("composite"), r.get("grade"), r.get("signal")),
+        )
+
+
+def insert_equity(ts: int, cash: float, positions_value: float,
+                  total: float, drawdown_pct: float) -> None:
+    with tx() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO equity (ts, cash, positions_value, total, drawdown_pct) "
+            "VALUES (?,?,?,?,?)",
+            (ts, cash, positions_value, total, drawdown_pct),
+        )
+
+
+# --- Readers ---------------------------------------------------------------
+
+
+def get_candles(symbol: str, interval: str = config.CANDLE_INTERVAL,
+                limit: int = config.CANDLE_LIMIT) -> list[dict[str, Any]]:
+    rows = query(
+        "SELECT open_time, o, h, l, c, v FROM candles "
+        "WHERE symbol=? AND interval=? ORDER BY open_time DESC LIMIT ?",
+        (symbol, interval, limit),
+    )
+    return list(reversed(rows))
+
+
+def latest_snapshot(symbol: str) -> dict[str, Any] | None:
+    return query_one(
+        "SELECT * FROM snapshots WHERE symbol=? ORDER BY ts DESC LIMIT 1", (symbol,)
+    )
+
+
+def latest_rating(symbol: str) -> dict[str, Any] | None:
+    return query_one(
+        "SELECT * FROM ratings WHERE symbol=? ORDER BY ts DESC LIMIT 1", (symbol,)
+    )
+
+
+def rating_history(symbol: str, limit: int = 500) -> list[dict[str, Any]]:
+    rows = query(
+        "SELECT ts, momentum, risk, structure, relative, composite, signal "
+        "FROM ratings WHERE symbol=? ORDER BY ts DESC LIMIT ?",
+        (symbol, limit),
+    )
+    return list(reversed(rows))
+
+
+def price_history(symbol: str, limit: int = 200) -> list[dict[str, Any]]:
+    rows = query(
+        "SELECT ts, price FROM snapshots WHERE symbol=? AND price IS NOT NULL "
+        "ORDER BY ts DESC LIMIT ?",
+        (symbol, limit),
+    )
+    return list(reversed(rows))
+
+
+def get_meta(key: str, default: str | None = None) -> str | None:
+    row = query_one("SELECT value FROM meta WHERE key=?", (key,))
+    return row["value"] if row else default
+
+
+def set_meta(key: str, value: str) -> None:
+    with tx() as conn:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
+# --- Maintenance -----------------------------------------------------------
+
+
+def prune(retention_days: int = config.RETENTION_DAYS) -> int:
+    """Drop high-frequency rows past the retention window. Candles, trades and
+    equity are kept indefinitely -- they are low-volume and historically useful."""
+    cutoff = now_ms() - retention_days * 86_400_000
+    with tx() as conn:
+        n = conn.execute("DELETE FROM snapshots WHERE ts < ?", (cutoff,)).rowcount
+        n += conn.execute("DELETE FROM ratings WHERE ts < ?", (cutoff,)).rowcount
+    return n
+
+
+def reset_portfolio() -> None:
+    """Wipe simulated trading state. Market data is preserved."""
+    with tx() as conn:
+        conn.execute("DELETE FROM positions")
+        conn.execute("DELETE FROM trades")
+        conn.execute("DELETE FROM equity")

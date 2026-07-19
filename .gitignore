@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local data — the SQLite store is regenerated at runtime
+data/
+*.db
+*.db-journal
+*.sqlite3
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# macOS
+.DS_Store
