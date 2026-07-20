@@ -64,19 +64,37 @@ def _candles_as_dicts(rows: list[tuple]) -> list[dict]:
     return [dict(zip(("open_time", "o", "h", "l", "c", "v"), r)) for r in rows]
 
 
+CANDLE_CONCURRENCY = 5
+
+
 async def refresh_candles(interval: str = config.CANDLE_INTERVAL,
                           limit: int = config.CANDLE_LIMIT) -> dict[str, list[dict]]:
-    """Pull fresh OHLC for every asset at the given interval and persist it."""
-    out: dict[str, list[dict]] = {}
-    for symbol in config.SYMBOLS:
-        try:
-            rows = await providers.fetch_candles(symbol, interval=interval, limit=limit)
-            if rows:
-                db.upsert_candles(symbol, interval, rows)
-                out[symbol] = _candles_as_dicts(rows)
-        except Exception as e:
-            log.warning("candle refresh (%s) failed for %s: %s", interval, symbol, e)
-    return out
+    """Pull fresh OHLC for every asset at the given interval and persist it.
+
+    Fetched concurrently: serially this was 15 round trips per interval, and on
+    a cold start (ephemeral disk, so every restart) that ran twice before the
+    first cycle could publish anything, leaving the dashboard empty for minutes
+    on a small instance. The semaphore keeps us from opening 15 sockets at once
+    against the same host.
+    """
+    sem = asyncio.Semaphore(CANDLE_CONCURRENCY)
+
+    async def one(symbol: str) -> tuple[str, list[dict]] | None:
+        async with sem:
+            try:
+                rows = await providers.fetch_candles(symbol, interval=interval, limit=limit)
+            except Exception as e:
+                log.warning("candle refresh (%s) failed for %s: %s", interval, symbol, e)
+                return None
+        if not rows:
+            return None
+        # DB write stays outside the semaphore-held network section but on the
+        # loop thread, so it remains serialised with every other writer.
+        db.upsert_candles(symbol, interval, rows)
+        return symbol, _candles_as_dicts(rows)
+
+    results = await asyncio.gather(*(one(s) for s in config.SYMBOLS))
+    return {sym: rows for r in results if r for sym, rows in (r,)}
 
 
 def load_candles() -> dict[str, list[dict]]:
@@ -214,32 +232,22 @@ async def run_cycle(cycle: int) -> None:
              f", {len(errors)} errors" if errors else "")
 
 
-async def bootstrap() -> None:
-    """First-run backfill so ratings and charts are useful within one cycle."""
-    # Logged because a key that failed to load looks exactly like an ordinary
-    # rate limit from the outside -- 429s with no hint that auth never applied.
-    log.info("coingecko auth: %s", coingecko.key_status())
-
-    hourly = db.query_one(
-        "SELECT COUNT(*) AS n FROM candles WHERE interval=?", (config.CANDLE_INTERVAL,))
-    if (hourly or {}).get("n", 0) == 0:
-        log.info("backfilling %d hourly candles per asset...", config.CANDLE_LIMIT)
-        await refresh_candles()
-
-    daily = db.query_one(
-        "SELECT COUNT(*) AS n FROM candles WHERE interval=?", (config.DAILY_INTERVAL,))
-    if (daily or {}).get("n", 0) == 0:
-        log.info("backfilling %d daily candles per asset...", config.DAILY_LIMIT)
-        await refresh_candles(config.DAILY_INTERVAL, config.DAILY_LIMIT)
-
-
 async def loop(stop: Callable[[], bool] | None = None) -> None:
     """Run until `stop()` returns True (or forever)."""
     db.connect()
     db.prune()
     manual.cash()  # seed starting capital on first run
 
-    await bootstrap()
+    # Logged because a key that failed to load looks exactly like an ordinary
+    # rate limit from the outside -- 429s with no hint that auth never applied.
+    log.info("coingecko auth: %s", coingecko.key_status())
+
+    # Reported before the first cycle finishes: the engine really is up, and a
+    # health check that says otherwise for the whole warm-up is just wrong.
+    # There was no separate bootstrap pass here; cycle 0 already refreshes both
+    # candle intervals (0 % KLINE_EVERY == 0 and 0 % DAILY_EVERY == 0), so
+    # backfilling first only did the same ~30 fetches twice.
+    STATE["running"] = True
 
     cycle = 0
     while not (stop and stop()):
