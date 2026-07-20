@@ -24,8 +24,10 @@ deliberately at the user's request. The engine only collects data and rates.
 the end — the point is that there is always a restore point and the session's
 state survives even if the conversation is lost.
 
-Repository: `tovmaskayuf/ai-trading-bot` on GitHub (**public**), branch `main`,
-HTTPS remote (`gh` is authenticated).
+Repository: `tovmaskayuf/ai_trading_training_bot` on GitHub (**public**), branch
+`main`, HTTPS remote (`gh` is authenticated). Renamed from `ai-trading-bot` on
+2026-07-20; GitHub redirects the old URL, but update links rather than relying
+on the redirect.
 
 - Commit when a module, fix, or coherent feature slice works — not per file.
 - Run both test scripts before committing anything under `analytics/`,
@@ -59,7 +61,7 @@ that pattern in new tests.
 
 **The directory name contains `}{`** (`ai_trading}{bot`). Braces break
 unquoted shell paths — always quote it. This is why the GitHub repo is named
-`ai-trading-bot`; GitHub rejects brace characters.
+`ai_trading_training_bot`; GitHub rejects brace characters.
 
 ## Architecture
 

@@ -21,7 +21,7 @@ def client() -> httpx.AsyncClient:
     if _client is None:
         _client = httpx.AsyncClient(
             timeout=TIMEOUT,
-            headers={"User-Agent": "ai-trading-bot/1.0"},
+            headers={"User-Agent": "ai-trading-training-bot/1.0"},
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
     return _client

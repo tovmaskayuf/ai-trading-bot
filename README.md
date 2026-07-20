@@ -39,7 +39,7 @@ The repository is public — anyone can run their own instance with the three
 commands above. To host a public URL, the included [`render.yaml`](render.yaml)
 deploys it to Render's free tier in a few clicks:
 
-1. Open **<https://render.com/deploy?repo=https://github.com/tovmaskayuf/ai-trading-bot>**
+1. Open **<https://render.com/deploy?repo=https://github.com/tovmaskayuf/ai_trading_training_bot>**
 2. Sign in (free), confirm, and Render builds and starts the service
 3. Your instance is live at `https://<your-service>.onrender.com`
 
@@ -150,4 +150,4 @@ render.yaml             one-click Render deployment blueprint
 - The engine only collects data and rates assets. **It never trades** — every
   trade in the portfolio is one you made.
 - The directory name contains `}{`, which breaks unquoted shell paths — always
-  quote it. (The GitHub repo is `ai-trading-bot`; GitHub rejects braces.)
+  quote it. (The GitHub repo is `ai_trading_training_bot`; GitHub rejects braces.)
