@@ -3,7 +3,11 @@
 # and Render reads this file to provision the service automatically.
 services:
   - type: web
-    name: ai-crypto-trading-training
+    # Hyphens, not underscores, even though the repo is ai_trading_training_bot:
+    # this name becomes the onrender.com subdomain, and underscores are not
+    # legal in a hostname (RFC 1123). Render rewrites them to hyphens anyway,
+    # so naming it with underscores here would just hide the conversion.
+    name: ai-trading-training-bot
     runtime: python
     plan: free
     # Frankfurt, not the default Oregon: Binance's API refuses requests from
