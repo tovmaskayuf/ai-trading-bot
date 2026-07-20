@@ -45,6 +45,21 @@ def set_cash(value: float) -> None:
     db.set_meta(CASH_KEY, str(value))
 
 
+def _set_cash_in(conn, value: float) -> None:
+    """Write cash on an existing transaction.
+
+    Trades must move the holding, the trade row and the cash balance together
+    or not at all. db.set_meta() opens its own transaction, so calling it after
+    the trade's tx() commits leaves a window where a crash books the asset but
+    not the payment -- free money on a buy, vanished proceeds on a sell.
+    """
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (CASH_KEY, str(value)),
+    )
+
+
 # --- Holdings --------------------------------------------------------------
 
 def holdings() -> list[dict]:
@@ -116,11 +131,11 @@ def buy(symbol: str, price: float, ts: int, *,
             "VALUES (?,'BUY',?,?,?,?,?)",
             (symbol, qty, price, gross, fee, ts),
         )
+        _set_cash_in(conn, available - total)
 
-    set_cash(available - total)
     log.info("MANUAL BUY  %-5s qty=%.6f @ %.6f  total=%.2f", symbol, qty, price, total)
     return {"symbol": symbol, "side": "BUY", "qty": qty, "price": price,
-            "value": gross, "fee": fee, "cash": cash()}
+            "value": gross, "fee": fee, "cash": available - total}
 
 
 def sell(symbol: str, price: float, ts: int, *,
@@ -155,6 +170,7 @@ def sell(symbol: str, price: float, ts: int, *,
     pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
 
     remaining = held["qty"] - qty
+    new_cash = cash() + proceeds
     with db.tx() as conn:
         if remaining <= 1e-12:
             conn.execute("DELETE FROM manual_holdings WHERE symbol=?", (symbol,))
@@ -168,13 +184,13 @@ def sell(symbol: str, price: float, ts: int, *,
             "VALUES (?,'SELL',?,?,?,?,?,?,?)",
             (symbol, qty, price, gross, fee, ts, pnl, pnl_pct),
         )
+        _set_cash_in(conn, new_cash)
 
-    set_cash(cash() + proceeds)
     log.info("MANUAL SELL %-5s qty=%.6f @ %.6f  pnl=%.2f (%.2f%%)",
              symbol, qty, price, pnl, pnl_pct)
     return {"symbol": symbol, "side": "SELL", "qty": qty, "price": price,
             "value": gross, "fee": fee, "pnl": pnl, "pnl_pct": pnl_pct,
-            "cash": cash()}
+            "cash": new_cash}
 
 
 # --- Reporting -------------------------------------------------------------
@@ -208,11 +224,23 @@ def snapshot(prices: dict[str, float]) -> dict:
 
     rows.sort(key=lambda r: r["value"], reverse=True)
 
-    all_trades = trades(limit=10_000)
-    sells = [t for t in all_trades if t["side"] == "SELL"]
-    wins = [t for t in sells if (t["pnl"] or 0) > 0]
-    realized = sum(t["pnl"] or 0 for t in sells)
-    fees_paid = sum(t["fee"] or 0 for t in all_trades)
+    # Aggregate in SQL rather than pulling every trade into Python. This runs
+    # on each cycle for every connected client, so a long trade history used to
+    # mean tens of thousands of rows marshalled per second across viewers.
+    agg = db.query_one(
+        "SELECT COUNT(*) AS trade_count, "
+        "       COALESCE(SUM(fee), 0) AS fees_paid, "
+        "       COALESCE(SUM(CASE WHEN side='SELL' THEN pnl END), 0) AS realized, "
+        "       COALESCE(SUM(side='SELL'), 0) AS closed_count, "
+        "       COALESCE(SUM(side='SELL' AND pnl > 0), 0) AS wins "
+        "FROM manual_trades"
+    ) or {}
+    trade_count = agg.get("trade_count") or 0
+    fees_paid = agg.get("fees_paid") or 0.0
+    realized = agg.get("realized") or 0.0
+    closed_count = agg.get("closed_count") or 0
+    wins = agg.get("wins") or 0
+    recent_trades = trades(limit=200)
 
     total = c + market_value
     for r in rows:
@@ -231,10 +259,10 @@ def snapshot(prices: dict[str, float]) -> dict:
         "realized_pnl": realized,
         "fees_paid": fees_paid,
         "holdings": rows,
-        "trades": all_trades[:200],
-        "trade_count": len(all_trades),
-        "closed_count": len(sells),
-        "win_rate": (len(wins) / len(sells) * 100) if sells else 0.0,
+        "trades": recent_trades,
+        "trade_count": trade_count,
+        "closed_count": closed_count,
+        "win_rate": (wins / closed_count * 100) if closed_count else 0.0,
         "fee_rate": config.FEE_RATE,
     }
 

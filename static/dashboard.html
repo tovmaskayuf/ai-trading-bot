@@ -4,6 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Crypto Trading and Training by TT</title>
+<!-- Everything on this page is rendered client-side, so a crawler that does not
+     run JavaScript sees an empty shell. These tags, plus the no-script summary
+     further down the body, are the only description such a reader gets. -->
+<meta name="description" content="A free paper-trading trainer for 15 major cryptocurrencies. Live prices refresh every 60 seconds and each asset is rated 0-100 across four axes - momentum, risk, market structure and relative strength - producing a letter grade and a BUY/HOLD/SELL signal. Practice with virtual money; no real funds and no automated trading.">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AI Crypto Trading and Training by TT">
+<meta property="og:title" content="AI Crypto Trading and Training by TT">
+<meta property="og:description" content="Paper-trade 15 cryptocurrencies with live prices and a four-axis AI rating system. Virtual money only.">
+<meta name="twitter:card" content="summary">
 <!-- Same TT mark as the landing logo, inlined so there is no second request
      and no separate asset file to keep in sync. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2048%2048'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0%25'%20stop-color='%232a78d6'/%3E%3Cstop%20offset='100%25'%20stop-color='%231baf7a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='48'%20height='48'%20rx='13'%20fill='url%28%23g%29'/%3E%3Crect%20x='8'%20y='17'%20width='14'%20height='4.5'%20rx='2'%20fill='%23fff'%20opacity='.8'/%3E%3Crect%20x='12.75'%20y='17'%20width='4.5'%20height='17'%20rx='2'%20fill='%23fff'%20opacity='.8'/%3E%3Crect%20x='26'%20y='9.5'%20width='14'%20height='4.5'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='30.75'%20y='9.5'%20width='4.5'%20height='17'%20rx='2'%20fill='%23fff'/%3E%3C/svg%3E">
@@ -521,6 +531,46 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
 </style>
 </head>
 <body>
+
+<!-- Server-rendered summary for readers that do not execute JavaScript
+     (search crawlers, AI browsing tools, text browsers). Hidden from normal
+     visitors, who get the live app instead. -->
+<noscript>
+  <div style="max-width:680px;margin:40px auto;padding:24px;font:15px/1.6 system-ui,sans-serif">
+    <h1>AI Crypto Trading and Training by TT</h1>
+    <p>A free paper-trading trainer for 15 major cryptocurrencies. Live prices
+    refresh every 60 seconds; each asset is scored 0&ndash;100 on four axes and
+    given a letter grade (A+ to F) and a BUY / HOLD / SELL signal.</p>
+
+    <p><strong>You trade with virtual money.</strong> There is no real money,
+    no exchange account and no automated trading &mdash; every trade in the
+    portfolio is one you place yourself. It is a practice tool, not investment
+    advice.</p>
+
+    <h2>The four rating axes</h2>
+    <ul>
+      <li><strong>Momentum &amp; trend</strong> &mdash; RSI, MACD and moving-average structure across timeframes</li>
+      <li><strong>Volatility &amp; risk</strong> &mdash; ATR, realised volatility, drawdown and risk-adjusted return</li>
+      <li><strong>Market structure</strong> &mdash; market capitalisation, liquidity turnover, volume trend and spread</li>
+      <li><strong>Relative strength</strong> &mdash; performance against Bitcoin and against the rest of the basket</li>
+    </ul>
+
+    <h2>Assets tracked</h2>
+    <p>Bitcoin (BTC), Ethereum (ETH), Solana (SOL), BNB, XRP, Chainlink (LINK),
+    Sui (SUI), Avalanche (AVAX), TRON (TRX), Cardano (ADA), Arbitrum (ARB),
+    Ondo Finance (ONDO), Bittensor (TAO), Hyperliquid (HYPE) and Dogecoin (DOGE).</p>
+
+    <p>Live ratings for all 15 assets are available as JSON at
+    <a href="/api/overview">/api/overview</a>; service status is at
+    <a href="/api/health">/api/health</a>.</p>
+
+    <p>This page needs JavaScript for the interactive dashboard, charts and
+    trading. Market data by
+    <a href="https://www.coingecko.com">CoinGecko</a>,
+    <a href="https://www.binance.com">Binance</a> and
+    <a href="https://hyperliquid.xyz">Hyperliquid</a>.</p>
+  </div>
+</noscript>
 
 <!-- ══ Landing ══════════════════════════════════════════════════════════ -->
 <div id="landing">
