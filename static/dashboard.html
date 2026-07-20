@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Crypto Trading and Training by TT</title>
+<!-- Same TT mark as the landing logo, inlined so there is no second request
+     and no separate asset file to keep in sync. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2048%2048'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0%25'%20stop-color='%232a78d6'/%3E%3Cstop%20offset='100%25'%20stop-color='%231baf7a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='48'%20height='48'%20rx='13'%20fill='url%28%23g%29'/%3E%3Crect%20x='8'%20y='17'%20width='14'%20height='4.5'%20rx='2'%20fill='%23fff'%20opacity='.8'/%3E%3Crect%20x='12.75'%20y='17'%20width='4.5'%20height='17'%20rx='2'%20fill='%23fff'%20opacity='.8'/%3E%3Crect%20x='26'%20y='9.5'%20width='14'%20height='4.5'%20rx='2'%20fill='%23fff'/%3E%3Crect%20x='30.75'%20y='9.5'%20width='4.5'%20height='17'%20rx='2'%20fill='%23fff'/%3E%3C/svg%3E">
 <style>
 /* ══ Design tokens ══════════════════════════════════════════════════════ */
 :root {
@@ -224,15 +227,31 @@ header {
   border-bottom:1px solid var(--border);
   padding:12px 22px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
 }
-.brand { display:flex; align-items:center; gap:11px; min-width:0; }
+.brand {
+  display:flex; align-items:center; gap:11px; min-width:0;
+  background:none; border:0; padding:0; margin:0; cursor:pointer;
+  font:inherit; color:inherit; text-align:left; border-radius:12px;
+  transition:opacity .15s ease;
+}
+.brand:hover { opacity:.75; }
+.brand:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 .brand svg { width:32px; height:32px; flex:none; }
 .brand .bt { font-size:14.5px; font-weight:700; letter-spacing:-.02em; white-space:nowrap; }
 .brand .bt .by { color:var(--accent); }
 .brand .bs { font-size:11px; color:var(--text-muted); font-family:var(--mono); }
-.status { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text-secondary); }
-.dot { width:7px; height:7px; border-radius:50%; background:var(--good); animation:pulse 2.4s infinite; }
+/* Absolutely centred so the pill sits at the true middle of the bar rather
+   than at the midpoint of whatever space the side clusters happen to leave. */
+.status {
+  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  display:flex; align-items:center; gap:7px; white-space:nowrap;
+  font-size:12px; color:var(--text-secondary);
+}
+/* flex:none matters: without it the dot is a shrinkable flex item, and the
+   longer disconnected label squeezes it into an oval. */
+.dot { width:7px; height:7px; flex:none; border-radius:50%;
+  background:var(--good); animation:pulse 2.4s infinite; }
 .dot.off { background:var(--text-muted); animation:none; }
-.dot.err { background:var(--critical); }
+.dot.err { background:var(--critical); animation:none; }
 @keyframes pulse {
   0% { box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 55%,transparent); }
   70% { box-shadow:0 0 0 7px transparent; } 100% { box-shadow:0 0 0 0 transparent; }
@@ -470,6 +489,13 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
 .legend { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--text-secondary); }
 .legend span { display:flex; align-items:center; gap:5px; }
 
+/* The brand (~305px) and the right-hand controls (~330px) leave too little
+   room to centre the pill without them colliding, so below this width it goes
+   back into the normal flow instead of being absolutely positioned. */
+@media (max-width:1000px) {
+  .status { position:static; transform:none; }
+}
+
 @media (max-width:760px) {
   .hide-sm { display:none !important; }
   main { padding:14px; }
@@ -544,7 +570,7 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
 <!-- ══ App ══════════════════════════════════════════════════════════════ -->
 <div id="app" class="hide">
 <header>
-  <div class="brand">
+  <button class="brand" id="brandBtn" type="button">
     <svg viewBox="0 0 48 48" aria-hidden="true">
       <defs><linearGradient id="lgH" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0%" stop-color="#2a78d6"/><stop offset="100%" stop-color="#1baf7a"/>
@@ -559,7 +585,7 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
       <div class="bt">AI Crypto Trading and Training <span class="by">by TT</span></div>
       <div class="bs" id="subtitle"></div>
     </div>
-  </div>
+  </button>
   <div class="status"><span class="dot off" id="dot"></span><span id="statusText"></span></div>
   <div class="spacer"></div>
   <div class="tabs">
@@ -698,6 +724,7 @@ en: {
   capRange:"Starting capital must be between {lo} and {hi}.",
   markets:"Markets", portfolio:"Portfolio",
   live:"Live", connecting:"Connecting…", waiting:"Waiting for the first update…",
+  disconnected:"Disconnected · reconnecting…",
   cycle:"Cycle", updated:"Updated",
   marketAvg:"Market Average", topRated:"Top Rated", buySignals:"Buy Signals",
   advancing:"Advancing", rated:"rated", of:"of", onChg:"on 24h change", sellSignalsMeta:"{n} sell signals",
@@ -754,6 +781,7 @@ hy: {
   capRange:"Մեկնարկային կապիտալը պետք է լինի {lo}-ի և {hi}-ի միջև։",
   markets:"Շուկաներ", portfolio:"Պորտֆել",
   live:"Ուղիղ", connecting:"Միանում է…", waiting:"Սպասում ենք առաջին թարմացմանը…",
+  disconnected:"Անջատված · վերամիանում…",
   cycle:"Ցիկլ", updated:"Թարմացվել է",
   marketAvg:"Շուկայի միջինը", topRated:"Լավագույն գնահատականը", buySignals:"Գնման ազդանշաններ",
   advancing:"Աճող", rated:"գնահատված", of:"՝", onChg:"24ժ փոփոխությամբ", sellSignalsMeta:"{n} վաճառքի ազդանշան",
@@ -810,6 +838,7 @@ uk: {
   capRange:"Початковий капітал має бути між {lo} та {hi}.",
   markets:"Ринки", portfolio:"Портфель",
   live:"Наживо", connecting:"З'єднання…", waiting:"Очікування першого оновлення…",
+  disconnected:"Відключено · повторне з'єднання…",
   cycle:"Цикл", updated:"Оновлено",
   marketAvg:"Середнє по ринку", topRated:"Найвищий рейтинг", buySignals:"Сигнали на купівлю",
   advancing:"Зростають", rated:"оцінено", of:"з", onChg:"за зміною 24г", sellSignalsMeta:"{n} сигналів на продаж",
@@ -866,6 +895,7 @@ es: {
   capRange:"El capital inicial debe estar entre {lo} y {hi}.",
   markets:"Mercados", portfolio:"Cartera",
   live:"En vivo", connecting:"Conectando…", waiting:"Esperando la primera actualización…",
+  disconnected:"Desconectado · reconectando…",
   cycle:"Ciclo", updated:"Actualizado",
   marketAvg:"Promedio del mercado", topRated:"Mejor calificado", buySignals:"Señales de compra",
   advancing:"En alza", rated:"calificados", of:"de", onChg:"por cambio en 24h", sellSignalsMeta:"{n} señales de venta",
@@ -922,6 +952,7 @@ el: {
   capRange:"Το αρχικό κεφάλαιο πρέπει να είναι μεταξύ {lo} και {hi}.",
   markets:"Αγορές", portfolio:"Χαρτοφυλάκιο",
   live:"Ζωντανά", connecting:"Σύνδεση…", waiting:"Αναμονή πρώτης ενημέρωσης…",
+  disconnected:"Αποσυνδέθηκε · επανασύνδεση…",
   cycle:"Κύκλος", updated:"Ενημερώθηκε",
   marketAvg:"Μέσος όρος αγοράς", topRated:"Κορυφαία βαθμολογία", buySignals:"Σήματα αγοράς",
   advancing:"Ανοδικά", rated:"βαθμολογημένα", of:"από", onChg:"στη μεταβολή 24ω", sellSignalsMeta:"{n} σήματα πώλησης",
@@ -994,7 +1025,7 @@ const RANGE_LABEL = { '1h':'r1h','24h':'r24h','7d':'r7d','30d':'r30d','1y':'r1y'
 const S = {
   settings:null, assets:[], weights:null, defaults:null, thresholds:{},
   sort:{key:'composite',dir:-1}, view:'market', open:null, side:'BUY',
-  manual:null, cycleSeconds:60, updatedAt:null, cycle:0,
+  manual:null, cycleSeconds:60, updatedAt:null, cycle:0, disconnected:false,
   pfRange: localStorage.getItem('pfRange') || '24h',
   statMetric:null, statRange:'24h',
   drawerPriceRange:'24h', drawerScoreRange:'24h',
@@ -1788,7 +1819,8 @@ async function loadOverview() {
   for (const a of S.assets) if (held.has(a.symbol)) a.held = true;
 
   const errs = d.errors || [];
-  $('#dot').className = 'dot' + (errs.length ? ' err' : '');
+  // Don't paint over a dropped stream: connect() owns the dot while offline.
+  if (!S.disconnected) $('#dot').className = 'dot' + (errs.length ? ' err' : '');
   updateStatusText();
   $('#subtitle').textContent =
     `${followedAssets().length}/${S.assets.length} · ${S.cycleSeconds}s`;
@@ -1797,6 +1829,9 @@ async function loadOverview() {
   renderMarketTiles();
 }
 function updateStatusText() {
+  // A dropped stream used to keep saying "Live" while the dot turned red --
+  // the two halves of the pill contradicted each other.
+  if (S.disconnected) { $('#statusText').textContent = t('disconnected'); return; }
   $('#statusText').textContent = S.updatedAt
     ? `${t('live')} · ${t('cycle')} ${S.cycle} · ${ago(S.updatedAt)}`
     : t('waiting');
@@ -1821,7 +1856,14 @@ function connect() {
     refresh();
     if (S.open && !drawerBusy()) openDrawer(S.open);
   };
-  es.onerror = () => { $('#dot').className = 'dot err'; es.close(); setTimeout(connect, 5000); };
+  es.onopen = () => { S.disconnected = false; $('#dot').className = 'dot'; updateStatusText(); };
+  es.onerror = () => {
+    S.disconnected = true;
+    $('#dot').className = 'dot err';
+    updateStatusText();
+    es.close();
+    setTimeout(connect, 5000);
+  };
 }
 
 /* ══ Language & theme ═══════════════════════════════════════════════════ */
@@ -1882,6 +1924,7 @@ function toggleTheme() {
 $('#themeBtn').addEventListener('click', toggleTheme);
 $('#landTheme').addEventListener('click', toggleTheme);
 $('#setupBtn').addEventListener('click', showLanding);
+$('#brandBtn').addEventListener('click', showLanding);
 $('#landGo').addEventListener('click', () => Landing.submit());
 $('#selAll').addEventListener('click', () => {
   Landing.followed = new Set(S.settings.all_assets.map(a => a.symbol)); Landing.render();
