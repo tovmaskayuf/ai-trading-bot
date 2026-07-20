@@ -21,6 +21,7 @@ import config
 import db
 import engine
 import providers
+from providers import coingecko
 import settings
 from analytics import rating
 from trading import manual
@@ -432,6 +433,13 @@ async def health() -> dict[str, Any]:
         "updated_at": engine.STATE.get("updated_at"),
         "errors": engine.STATE.get("errors", []),
         "assets_tracked": len(config.SYMBOLS),
+        # Auth mode only -- never the key or any part of it. Exposed because a
+        # key that never reached the process is otherwise invisible: keyless
+        # calls are throttled only intermittently, so "no errors" looks
+        # identical whether the key loaded or not. (A *wrong* key is loud --
+        # CoinGecko 401s with error_code 10002 -- it is a *missing* one that
+        # hides.)
+        "coingecko_auth": coingecko.auth_mode(),
     }
 
 

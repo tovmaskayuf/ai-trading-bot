@@ -56,9 +56,22 @@ Structure axis then scores on volume trend and spread alone.
 2. In Render: **Environment → Add Environment Variable**
 3. Key `COINGECKO_API_KEY`, value your key. Leave `COINGECKO_PLAN` as `demo`.
 
-CoinGecko answers `200` to an *invalid* key rather than rejecting it, so a typo
-looks exactly like a rate limit. The startup log prints which mode is active —
-`coingecko auth: demo key ...abcd` or `coingecko auth: keyless` — check it there.
+A **wrong** key is obvious — CoinGecko rejects it with `401` / `error_code
+10002`, which surfaces in the dashboard's error banner. A **missing** key is
+the quiet failure: the app falls back to keyless, which works most of the time,
+so nothing looks broken until a throttle hits.
+
+To check which mode is actually live, hit `/api/health`:
+
+```bash
+curl -s https://<your-service>.onrender.com/api/health | grep coingecko_auth
+# "coingecko_auth": "demo"      <- key loaded
+# "coingecko_auth": "keyless"   <- key did not reach the process
+```
+
+If you put the variable in a Render **Environment Group**, creating the group
+is not enough — the group has to be linked to the service (service →
+Environment → *Link Environment Group*) or its variables never reach the app.
 
 Free-tier honesty notes:
 

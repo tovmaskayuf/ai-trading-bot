@@ -39,9 +39,17 @@ def auth_headers() -> dict[str, str]:
     return {("x-cg-pro-api-key" if IS_PRO else "x-cg-demo-api-key"): API_KEY}
 
 
+def auth_mode() -> str:
+    """'demo' | 'pro' | 'keyless'. Safe to expose over HTTP -- carries no key
+    material, only which mode is active."""
+    if not API_KEY:
+        return "keyless"
+    return "pro" if IS_PRO else "demo"
+
+
 def key_status() -> str:
-    """Human-readable auth mode, surfaced at startup so a key that silently
-    failed to load is visible rather than looking like a plain rate limit."""
+    """Human-readable auth mode for local logs, with a short key suffix to tell
+    two keys apart. Log-only -- use auth_mode() for anything user-facing."""
     if not API_KEY:
         return "keyless (IP-rate-limited)"
     return f"{'pro' if IS_PRO else 'demo'} key ...{API_KEY[-4:]}"
