@@ -70,6 +70,39 @@ def trades(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
 
 
 # --- Trading ---------------------------------------------------------------
+#
+# Both trade paths read cash and the holding *through the open transaction's
+# cursor*, not through the module-level helpers above, and derive every written
+# value from that read.
+#
+# Reading outside the transaction and writing an absolute value back is a lost
+# update: two concurrent buys both observe the opening balance, both compute the
+# same closing one, and the second silently overwrites the first -- one payment
+# vanishes and the buyer keeps both assets. Measured at 24 concurrent $10 buys
+# taking $110 instead of $240 out of cash. The same applies to `qty`, which is
+# also written as a precomputed absolute.
+#
+# This was unreachable while every route was `async def` on a single event loop,
+# because nothing interleaved. Moving the DB-touching routes into a threadpool
+# made it reachable on the first concurrent request, so it is fixed here rather
+# than left as a property of the old scheduling.
+
+
+def _cash_in(cur: Any, user_id: int) -> float:
+    """Cash balance read through an open transaction."""
+    cur.execute(userstore.DIALECT.convert(
+        "SELECT cash FROM portfolios WHERE user_id = ?"), (user_id,))
+    row = cur.fetchone()
+    return float(row[0]) if row else 0.0
+
+
+def _holding_in(cur: Any, user_id: int, symbol: str) -> tuple[float, float] | None:
+    """(qty, avg_cost) read through an open transaction, or None if not held."""
+    cur.execute(userstore.DIALECT.convert(
+        "SELECT qty, avg_cost FROM holdings "
+        "WHERE user_id = ? AND symbol = ? AND qty > 0"), (user_id, symbol))
+    row = cur.fetchone()
+    return (float(row[0]), float(row[1])) if row else None
 
 
 def buy(user_id: int, symbol: str, price: float, ts: int, *,
@@ -97,25 +130,31 @@ def buy(user_id: int, symbol: str, price: float, ts: int, *,
     fee = gross * config.FEE_RATE
     total = gross + fee
 
-    available = cash(user_id)
-    # Absorb float dust so a "Max" button does not fail by a fraction of a cent.
-    if total > available + 1e-6:
-        raise TradeError(
-            f"Insufficient cash: this order requires ${total:,.2f}, "
-            f"but only ${available:,.2f} is available."
-        )
-    total = min(total, available)
-
-    existing = holding_for(user_id, symbol)
-    if existing:
-        new_qty = existing["qty"] + qty
-        # Average cost includes fees, so realised P&L reflects what was paid.
-        new_cost = (existing["qty"] * existing["avg_cost"] + total) / new_qty
-    else:
-        new_qty, new_cost = qty, total / qty
+    # Make sure the row exists before opening the transaction: account() can
+    # insert one and it runs its own transaction to do it.
+    account(user_id)
 
     with userstore.tx() as cur:
         c = userstore.DIALECT.convert
+        available = _cash_in(cur, user_id)
+
+        # Absorb float dust so a "Max" button does not fail by a fraction of a cent.
+        if total > available + 1e-6:
+            raise TradeError(
+                f"Insufficient cash: this order requires ${total:,.2f}, "
+                f"but only ${available:,.2f} is available."
+            )
+        total = min(total, available)
+
+        existing = _holding_in(cur, user_id, symbol)
+        if existing:
+            held_qty, held_cost = existing
+            new_qty = held_qty + qty
+            # Average cost includes fees, so realised P&L reflects what was paid.
+            new_cost = (held_qty * held_cost + total) / new_qty
+        else:
+            new_qty, new_cost = qty, total / qty
+
         cur.execute(c(
             "INSERT INTO holdings (user_id, symbol, qty, avg_cost, updated_ts) "
             "VALUES (?,?,?,?,?) ON CONFLICT (user_id, symbol) DO UPDATE SET "
@@ -136,39 +175,43 @@ def buy(user_id: int, symbol: str, price: float, ts: int, *,
 def sell(user_id: int, symbol: str, price: float, ts: int, *,
          qty: float | None = None, fraction: float | None = None) -> dict[str, Any]:
     """Sell all or part of a holding. Realised P&L is booked against avg cost."""
-    held = holding_for(user_id, symbol)
-    if not held:
-        raise TradeError(f"You do not hold any {symbol}.")
     if price <= 0:
         raise TradeError("No live price is available for this asset yet. Please try again shortly.")
 
-    if fraction is not None:
-        if not 0 < fraction <= 1:
-            raise TradeError("The fraction must be between 0 and 1.")
-        qty = held["qty"] * fraction
-    if qty is None:
-        raise TradeError("Specify either a quantity or a fraction.")
-    if qty <= 0:
-        raise TradeError("The quantity must be greater than zero.")
-
-    # Tolerate float dust on a full sell rather than rejecting it.
-    if qty > held["qty"] + 1e-9:
-        raise TradeError(f"You only hold {held['qty']:.8f} {symbol}.")
-    qty = min(qty, held["qty"])
-
-    gross = qty * price
-    fee = gross * config.FEE_RATE
-    proceeds = gross - fee
-
-    cost_basis = qty * held["avg_cost"]
-    pnl = proceeds - cost_basis
-    pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
-
-    remaining = held["qty"] - qty
-    new_cash = cash(user_id) + proceeds
+    account(user_id)
 
     with userstore.tx() as cur:
         c = userstore.DIALECT.convert
+        existing = _holding_in(cur, user_id, symbol)
+        if not existing:
+            raise TradeError(f"You do not hold any {symbol}.")
+        held_qty, held_cost = existing
+
+        if fraction is not None:
+            if not 0 < fraction <= 1:
+                raise TradeError("The fraction must be between 0 and 1.")
+            qty = held_qty * fraction
+        if qty is None:
+            raise TradeError("Specify either a quantity or a fraction.")
+        if qty <= 0:
+            raise TradeError("The quantity must be greater than zero.")
+
+        # Tolerate float dust on a full sell rather than rejecting it.
+        if qty > held_qty + 1e-9:
+            raise TradeError(f"You only hold {held_qty:.8f} {symbol}.")
+        qty = min(qty, held_qty)
+
+        gross = qty * price
+        fee = gross * config.FEE_RATE
+        proceeds = gross - fee
+
+        cost_basis = qty * held_cost
+        pnl = proceeds - cost_basis
+        pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
+
+        remaining = held_qty - qty
+        new_cash = _cash_in(cur, user_id) + proceeds
+
         if remaining <= 1e-12:
             cur.execute(c("DELETE FROM holdings WHERE user_id = ? AND symbol = ?"),
                         (user_id, symbol))

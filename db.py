@@ -148,13 +148,32 @@ def tx() -> Iterator[sqlite3.Connection]:
             raise
 
 
+# Reads take the lock too, and use an explicit cursor rather than the
+# connection-level execute() shortcut. Connection.execute() allocates and
+# advances a cursor owned by the connection, so two threads calling it at once
+# on the shared connection tread on each other's statement state -- which
+# surfaces as "sqlite3.InterfaceError: bad parameter or other API misuse" under
+# concurrent reads, not as wrong data. Nothing hit this while every route was a
+# coroutine on one event loop; the threadpool made it reachable immediately.
 def query(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-    return [dict(r) for r in connect().execute(sql, params).fetchall()]
+    conn = connect()
+    with _lock:
+        cur = conn.cursor()
+        try:
+            return [dict(r) for r in cur.execute(sql, params).fetchall()]
+        finally:
+            cur.close()
 
 
 def query_one(sql: str, params: tuple = ()) -> dict[str, Any] | None:
-    row = connect().execute(sql, params).fetchone()
-    return dict(row) if row else None
+    conn = connect()
+    with _lock:
+        cur = conn.cursor()
+        try:
+            row = cur.execute(sql, params).fetchone()
+            return dict(row) if row else None
+        finally:
+            cur.close()
 
 
 # --- Writers ---------------------------------------------------------------
