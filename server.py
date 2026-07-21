@@ -191,7 +191,7 @@ def get_settings() -> dict[str, Any]:
 
 @app.post("/api/settings")
 def save_settings(payload: dict[str, Any], request: Request,
-                        response: Response) -> dict[str, Any]:
+                  response: Response) -> dict[str, Any]:
     """Apply start-screen choices. Changing the starting capital resets the
     caller's own portfolio to the new amount; language and asset selection
     never do."""
@@ -278,7 +278,7 @@ def overview(request: Request, response: Response) -> dict[str, Any]:
 
 @app.get("/api/asset/{symbol}")
 def asset_detail(symbol: str, request: Request,
-                       response: Response) -> dict[str, Any]:
+                 response: Response) -> dict[str, Any]:
     symbol = symbol.upper()
     if symbol not in config.BY_SYMBOL:
         raise HTTPException(404, f"Unknown symbol: {symbol}.")
@@ -405,7 +405,7 @@ def me(request: Request, response: Response) -> dict[str, Any]:
 
 @app.post("/api/auth/signup")
 def signup(payload: dict[str, Any], request: Request,
-                 response: Response) -> dict[str, Any]:
+           response: Response) -> dict[str, Any]:
     """Create an account. A guest keeps the portfolio it already built."""
     username = str(payload.get("username", ""))
     password = str(payload.get("password", ""))
@@ -433,7 +433,7 @@ def signup(payload: dict[str, Any], request: Request,
 
 @app.post("/api/auth/login")
 def login(payload: dict[str, Any], request: Request,
-                response: Response) -> dict[str, Any]:
+          response: Response) -> dict[str, Any]:
     try:
         user = accounts.authenticate(
             str(payload.get("username", "")), str(payload.get("password", "")))
@@ -458,7 +458,7 @@ def logout(request: Request, response: Response) -> dict[str, Any]:
 
 @app.get("/api/leaderboard")
 def leaderboard(request: Request, response: Response,
-                      limit: int = 100) -> dict[str, Any]:
+                limit: int = 100) -> dict[str, Any]:
     """Global standings. Everyone is marked to the same prices at read time."""
     user = require_user(request, response)
     rows = pf.leaderboard(_current_prices(), limit=max(1, min(limit, 500)))
@@ -492,7 +492,7 @@ def admin_players(request: Request, response: Response) -> dict[str, Any]:
 
 @app.get("/api/admin/player/{user_id}")
 def admin_player(user_id: int, request: Request,
-                       response: Response) -> dict[str, Any]:
+                 response: Response) -> dict[str, Any]:
     require_admin(request, response)
     try:
         return admin.player_detail(user_id, _current_prices())
@@ -502,7 +502,7 @@ def admin_player(user_id: int, request: Request,
 
 @app.post("/api/admin/player/{user_id}/block")
 def admin_block(user_id: int, payload: dict[str, Any], request: Request,
-                      response: Response) -> dict[str, Any]:
+                response: Response) -> dict[str, Any]:
     require_admin(request, response)
     try:
         return admin.set_blocked(user_id, bool(payload.get("blocked", True)))
@@ -512,7 +512,7 @@ def admin_block(user_id: int, payload: dict[str, Any], request: Request,
 
 @app.post("/api/admin/player/{user_id}/delete")
 def admin_delete(user_id: int, request: Request,
-                       response: Response) -> dict[str, Any]:
+                 response: Response) -> dict[str, Any]:
     """Delete a player and release their username for reuse."""
     require_admin(request, response)
     try:
@@ -523,8 +523,8 @@ def admin_delete(user_id: int, request: Request,
 
 @app.post("/api/admin/player/{user_id}/password")
 def admin_reset_password(user_id: int, payload: dict[str, Any],
-                               request: Request,
-                               response: Response) -> dict[str, Any]:
+                         request: Request,
+                         response: Response) -> dict[str, Any]:
     require_admin(request, response)
     try:
         return admin.reset_password(user_id, str(payload.get("password", "")))
@@ -545,7 +545,7 @@ def manual_view(request: Request, response: Response) -> dict[str, Any]:
 
 @app.get("/api/manual/history")
 def manual_history(request: Request, response: Response,
-                         range: str = "24h") -> dict[str, Any]:
+                   range: str = "24h") -> dict[str, Any]:
     """Portfolio value over time. Returns every metric column; the client
     chooses which one to chart."""
     user = require_user(request, response)
@@ -555,7 +555,7 @@ def manual_history(request: Request, response: Response,
 
 @app.post("/api/manual/trade")
 def manual_trade(payload: dict[str, Any], request: Request,
-                       response: Response) -> dict[str, Any]:
+                 response: Response) -> dict[str, Any]:
     """Execute a simulated buy or sell at the current live price.
 
     Price is taken server-side rather than from the client, so a stale page
@@ -721,6 +721,13 @@ def health() -> dict[str, Any]:
         # becomes visible once the data is already gone.
         "store_backend": userstore.backend(),
         "accounts_durable": userstore.backend() == "postgres",
+        # Whether MASTER_PASSWORD reached the process, and whether an admin row
+        # exists as a result. Without this the only symptom of a missing or
+        # mis-named env var is a login that fails exactly like a wrong password.
+        "admin_configured": bool(admin.MASTER_PASSWORD),
+        "admin_username": admin.MASTER_USERNAME,
+        "admin_exists": bool(userstore.query_one(
+            "SELECT 1 AS x FROM users WHERE is_admin = 1 LIMIT 1")),
         "registered_players": (userstore.query_one(
             "SELECT COUNT(*) AS n FROM users WHERE is_guest = 0") or {}).get("n", 0),
     }
