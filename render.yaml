@@ -1,5 +1,5 @@
 # One-click deployment blueprint for Render (free tier).
-# Visit https://render.com/deploy?repo=https://github.com/tovmaskayuf/ai_trading_training_bot
+# Visit https://render.com/deploy?repo=https://github.com/tovmaskayuf/ai-trading-training-bot
 # and Render reads this file to provision the service automatically.
 services:
   - type: web

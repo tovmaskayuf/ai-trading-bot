@@ -32,10 +32,11 @@ for all of them. Do not reintroduce process-global portfolio state.
 the end — the point is that there is always a restore point and the session's
 state survives even if the conversation is lost.
 
-Repository: `tovmaskayuf/ai_trading_training_bot` on GitHub (**public**), branch
-`main`, HTTPS remote (`gh` is authenticated). Renamed from `ai-trading-bot` on
-2026-07-20; GitHub redirects the old URL, but update links rather than relying
-on the redirect.
+Repository: `tovmaskayuf/ai-trading-training-bot` on GitHub (**public**), branch
+`main`, HTTPS remote (`gh` is authenticated). Renamed from `ai-trading-bot` to
+`ai_trading_training_bot` on 2026-07-20, then to the current hyphenated name on
+2026-07-21 so the repo, the Render service and the site all read alike. GitHub
+redirects both old URLs, but update links rather than relying on the redirect.
 
 - Commit when a module, fix, or coherent feature slice works — not per file.
 - Run the suites covering what you touched, and run **all** of `tests/` before
@@ -44,7 +45,8 @@ on the redirect.
   `test_portfolio.py`; `admin.py` → `test_admin.py`;
   `static/dashboard.html` → `test_frontend.py`;
   `settings.py`/`trading/manual.py` → `test_manual.py`;
-  `providers/base.py`/`engine.py` cadence → `test_ratelimit.py`.
+  `providers/base.py`/`engine.py` cadence → `test_ratelimit.py`;
+  retention/`GUEST_TTL_DAYS`/`EQUITY_RETENTION_DAYS` → `test_maintenance.py`.
 - Subject: imperative, under ~72 chars. Body: explain **why** — the constraint
   or upstream quirk that motivated the change. Match existing commits.
 - Never commit `.venv/`, `data/`, `*.log`, or `.claude/settings.local.json` —
@@ -92,7 +94,7 @@ file was valid. It is not — only `node --check` and an HTML parse are.
 
 **The directory name contains `}{`** (`ai_trading}{bot`). Braces break
 unquoted shell paths — always quote it. This is why the GitHub repo is named
-`ai_trading_training_bot`; GitHub rejects brace characters.
+`ai-trading-training-bot`; GitHub rejects brace characters.
 
 ## Architecture
 
