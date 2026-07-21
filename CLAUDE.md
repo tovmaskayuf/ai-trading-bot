@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cryptocurrencies. A 60-second polling engine collects live prices and computes
 a four-axis AI rating per asset; each visitor trades their own virtual
 portfolio by hand through a Polymarket-styled web UI with an animated start
-screen, five languages, time-range charts everywhere, optional accounts, and a
-global leaderboard.
+screen, five languages, time-range charts everywhere, optional accounts, a
+global leaderboard, and a master console for administering players.
 
 **There is no automated trading.** An earlier iteration had a bot that traded
 its own portfolio against the user's ("versus bot"); that was removed
@@ -38,8 +38,11 @@ Repository: `tovmaskayuf/ai_trading_training_bot` on GitHub (**public**), branch
 on the redirect.
 
 - Commit when a module, fix, or coherent feature slice works — not per file.
-- Run both test scripts before committing anything under `analytics/`,
-  `trading/`, or `settings.py`.
+- Run the suites covering what you touched; run all five before anything that
+  crosses module boundaries. `analytics/` → `test_indicators.py`;
+  `portfolio.py`/`accounts.py`/`userstore.py` → `test_portfolio.py`;
+  `admin.py` → `test_admin.py`; `static/dashboard.html` → `test_frontend.py`;
+  `settings.py`/`trading/manual.py` → `test_manual.py`.
 - Subject: imperative, under ~72 chars. Body: explain **why** — the constraint
   or upstream quirk that motivated the change. Match existing commits.
 - Never commit `.venv/`, `data/`, `*.log`, or `.claude/settings.local.json` —
@@ -283,10 +286,15 @@ survived being reverted.
 
 One self-contained file, no CDN, no build step: animated landing (language
 pills, 15 asset switches, capital input), Markets / Portfolio / Leaderboard
-views, a clickable stat sub-page per tile (Cash / Invested / Unrealized /
-Realized / Fees), buy/sell drawer, account modal, SSE live updates, light/dark
-themes.
+views plus an admin-only Master view, a clickable stat sub-page per tile (Cash /
+Invested / Unrealized / Realized / Fees), buy/sell drawer, account modal, SSE
+live updates, light/dark themes.
 
+- **The Master tab is hidden, not protected, in the client.** `#adminTab`
+  ships with `.hide` and is only revealed when `/api/me` comes back
+  `is_admin`. That is cosmetic — the real enforcement is server-side, where
+  every `/api/admin/*` route 404s for non-admins. Never let the client's flag
+  become the thing that gates access.
 - **Header layout**: the live/cycle status pill sits between the brand and the
   view tabs, held there by a `.header-gap` spacer on each side. It is
   deliberately *not* centred on the viewport — the right-hand cluster is wider
@@ -321,12 +329,38 @@ themes.
 - The drawer defers re-renders while the user is typing an amount
   (`drawerBusy()`), or a cycle update would wipe their input mid-trade.
 
-## Cadence constraints
+## Cadence and rate limits
 
 `CYCLE_SECONDS = 60`. The stagger multiples are sized so the **wall-clock**
 rates stay at the values that were safe at the old 120s cycle: klines every
 10th cycle (~10 min), CoinGecko every 8th (~8 min), daily candles every 60th
 (~hourly). Lowering the multiples risks free-tier 429s.
+
+**Binance bans, it does not merely throttle.** Repeated 429s escalate to HTTP
+418 with an IP ban lasting tens of minutes — this happened, for 30 minutes, and
+presented as prices flowing while momentum/risk/relative stayed empty (those
+three need candles; only HYPE, which is not on Binance, kept a full rating).
+
+Three rules came out of it, all with tests in `tests/test_ratelimit.py`:
+
+1. **Never retry a rate-limit response.** `providers/base.py` retries transport
+   errors and 5xx, but 418/429 fail immediately and put the *host* on a
+   cooldown parsed from the ban timestamp or `Retry-After`. Retrying is what
+   escalates a soft limit into a ban, since each attempt spends more of the
+   same budget. A three-attempt retry on 429 is what caused this.
+2. **`CANDLE_CONCURRENCY = 2`, not 5.** klines costs weight 4 per call and the
+   budget is per *IP* — which on Render's shared egress is not ours alone. A
+   five-wide burst across 14 symbols on every cold start was the trigger.
+   Concurrency buys a few seconds of startup; a ban costs half an hour.
+3. **Daily candles are deferred off cycle 0** (fetched on cycle 1 instead when
+   the database is empty). Both intervals refreshing on the same cold-start
+   tick doubled the weight at the exact moment every symbol needed a full pull.
+   Nothing needs daily bars in the first minute — they feed the 1y/all charts,
+   not the ratings.
+
+`/api/health` reports `rate_limited` (hosts on cooldown, seconds remaining) and
+`candle_errors`. Empty is healthy; an entry there explains missing rating axes
+immediately instead of via the logs.
 
 ## Deployment
 
@@ -344,6 +378,21 @@ Without it the app still runs, but the user store falls back to SQLite on the
 ephemeral disk and every account, portfolio and leaderboard standing is wiped
 on restart. **Free Render Postgres expires 30 days after creation** and is
 deleted after a 14-day grace period — upgrade or export before then.
+
+That fallback is silent from the outside, which is why `/api/health` reports
+`store_backend` and `accounts_durable`. Check them after any deploy that
+touches the database: `"store_backend": "sqlite"` on the live instance means
+accounts are already living on borrowed time, and the difference is only
+otherwise visible once the data is gone.
+
+**`MASTER_PASSWORD` gates the admin account into existence.** `render.yaml`
+declares it `sync: false` so Render prompts for it rather than storing it in
+the repo — this is a public repository and a committed admin credential is
+readable by anyone. Deploy without it and there is **no admin account at all**
+(by design, over a guessable default), so the Master tab never appears for
+anyone. `MASTER_USERNAME` defaults to `master`. Changing the env var and
+redeploying rotates the password, because `ensure_master()` re-applies it on
+every boot.
 
 Other free-tier realities: instance sleeps when idle, and the market-data disk
 is ephemeral (candles re-backfill on every cold start, ~3.5s). A claude.ai
