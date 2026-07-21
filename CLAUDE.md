@@ -381,6 +381,12 @@ Without it the app still runs, but the user store falls back to SQLite on the
 ephemeral disk and every account, portfolio and leaderboard standing is wiped
 on restart. **Free Render Postgres expires 30 days after creation** and is
 deleted after a 14-day grace period — upgrade or export before then.
+`tools/backup_userstore.py` is the export: it dumps `users`, `portfolios`,
+`holdings`, `user_trades` and `user_equity` to JSON through psycopg, so it
+needs no `pg_dump` on the machine running it. Point it at the **External**
+connection string; the internal one only resolves inside Render's network.
+It skips `sessions` on purpose — live tokens, self-expiring, no upside to
+writing them to disk.
 
 That fallback is silent from the outside, which is why `/api/health` reports
 `store_backend` and `accounts_durable`. Check them after any deploy that
