@@ -754,7 +754,9 @@ provisions `tt-trading-db` (free plan, Frankfurt) and injects `DATABASE_URL`.
 Without it the app still runs, but the user store falls back to SQLite on the
 ephemeral disk and every account, portfolio and leaderboard standing is wiped
 on restart. **Free Render Postgres expires 30 days after creation** and is
-deleted after a 14-day grace period — upgrade or export before then.
+deleted after a 14-day grace period — upgrade or export before then. **The
+current instance expires 2026-08-20 and is deleted 2026-09-03**; see *Rotating
+the expired Postgres* below for the dated checklist.
 `tools/backup_userstore.py` is the export: it dumps `app_meta`, `users`,
 `portfolios`, `holdings`, `user_trades` and `user_equity` to JSON through
 psycopg, so it needs no `pg_dump` on the machine running it. Point it at the
@@ -777,7 +779,45 @@ hash is not a password.
 
 ### Rotating the expired Postgres
 
-Roughly monthly. Nothing in the app warns you, so put the expiry in a calendar.
+**This instance: `tt-trading-db` was created 2026-07-21.**
+
+| | date | |
+|---|---|---|
+| Created | **2026-07-21** | Tue |
+| **Expires** | **2026-08-20** | Thu — 30 days after creation |
+| Deleted | **2026-09-03** | Thu — after the 14-day grace; data is gone for good |
+
+Recurring roughly monthly thereafter, from each new database's creation date.
+Nothing in the app warns you, so put the date in a calendar — **the failure is
+silent**: `userstore` falls back to SQLite on the ephemeral disk and the site
+keeps serving normally while every account is wiped on the next restart.
+`"store_backend": "sqlite"` in `/api/health` is the only outward sign.
+
+**The one precondition: a backup file has to already exist.** Everything below
+assumes one. Take it well before the date, and take a rehearsal one early —
+discovering the External connection string is wrong on expiry day is the bad
+version of this.
+
+Steps split by who can do them, because half of it is dashboard-only:
+
+- **Only you can:** delete and recreate the database in the Render dashboard,
+  and re-enter the two `sync: false` env vars. **Copy `COINGECKO_API_KEY` and
+  `MASTER_PASSWORD` out of the dashboard before touching anything** — a service
+  fork loses them, and `MASTER_PASSWORD` unset means no admin account at all.
+- **Claude can:** run the backup and restore commands (given the External URL),
+  verify `/api/health` afterwards, and walk this checklist with you.
+
+The master account needs no special handling: it comes back from the backup
+with its original hash, and `ensure_master()` re-applies `MASTER_PASSWORD` over
+it on the next boot, which is idempotent.
+
+**If there is no backup**, the rotation still works but the data does not come
+back: you get a new empty database, `ensure_master()` mints the admin from
+`MASTER_PASSWORD`, and every player account, portfolio and trade history is
+gone. Settings revert to the defaults too, since `app_meta` lives in the same
+database. So the whole procedure hinges on one file existing.
+
+---
 
 **Before it expires.** Take a backup — `/api/admin/export` in the browser, or
 `DATABASE_URL='…external…' .venv/bin/python tools/backup_userstore.py --out ~/backups`.
