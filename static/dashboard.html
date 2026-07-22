@@ -2267,9 +2267,11 @@ const Admin = {
 
   render() {
     const q = this.filter.trim().toLowerCase();
-    // Guests are hidden by default. Every cookie-less request mints one --
-    // including crawlers and uptime probes -- so they outnumber real players
-    // by an order of magnitude and bury them.
+    // Only guests who have traded reach the client at all -- the server drops
+    // the rest, since every cookie-less request mints a guest row and crawlers
+    // and uptime probes would otherwise bury the real players. The ones that
+    // do arrive are still hidden behind this toggle by default: they are
+    // people mid-trial, not accounts to administer.
     const rows = this.players.filter(p =>
       (this.showGuests || !p.is_guest) &&
       (!q || (p.username || '').toLowerCase().includes(q) ||
@@ -2296,9 +2298,11 @@ const Admin = {
         (p.is_admin ? `<span class="ad-tag admin">${esc(t('master'))}</span>` : '') +
         (p.is_guest ? `<span class="ad-tag guest">${esc(t('guest'))}</span>` : '') +
         (p.is_blocked ? `<span class="ad-tag blocked">${esc(t('blocked'))}</span>` : '');
-      // Admins are protected server-side too; disabling here just avoids
-      // offering an action that will be refused.
-      const locked = p.is_admin;
+      // Admins and guests are both refused server-side; disabling here just
+      // avoids offering an action that will come back as an error. Guests have
+      // no login to block and are purged on a TTL, so neither action means
+      // anything against one.
+      const locked = p.is_admin || p.is_guest;
       return `<div class="ad-row${p.is_blocked ? ' blocked' : ''}${p.id === this.me ? ' self' : ''}">
         <div class="ad-who">
           <div class="ad-name">${esc(p.name)}${tags}</div>

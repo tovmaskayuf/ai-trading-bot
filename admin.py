@@ -112,13 +112,36 @@ def is_admin(user: dict[str, Any] | None) -> bool:
 # --- Read ------------------------------------------------------------------
 
 
+def _visible_sql(alias: str = "u") -> str:
+    """SQL predicate for the accounts the console is allowed to show.
+
+    Registered players always; a guest only once they have traded. Every
+    cookie-less request mints a guest row -- crawlers, uptime probes and
+    one-off page loads each leave one behind -- so untraded guests are
+    overwhelmingly not people, and listing them buries the players who are.
+    Placing a trade is the first deliberate thing a visitor does, which makes
+    it a better line than age or session count.
+
+    Shared by list_players() and player_detail() so the two agree exactly. If
+    they drifted, a guest hidden from the list would still be fetchable by id,
+    which is hiding rather than protecting.
+    """
+    return (f"({alias}.is_guest = 0 OR EXISTS "
+            f"(SELECT 1 FROM user_trades t WHERE t.user_id = {alias}.id))")
+
+
 def list_players(prices: dict[str, float]) -> list[dict[str, Any]]:
-    """Every account with its live standing. Guests included, flagged."""
+    """Accounts the console tracks, with live standing. Guests flagged.
+
+    Untraded guests are excluded -- see _visible_sql(). stats() still counts
+    every guest, so the headline number stays honest about total traffic.
+    """
     rows = userstore.query(
         "SELECT u.id, u.username, u.display_name, u.is_guest, u.is_admin, "
         "       u.is_blocked, u.blocked_ts, u.last_seen_ts, u.created_ts, "
         "       p.cash, p.starting_capital "
         "FROM users u LEFT JOIN portfolios p ON p.user_id = u.id "
+        f"WHERE {_visible_sql('u')} "
         "ORDER BY u.created_ts DESC")
 
     holdings: dict[int, list[dict[str, Any]]] = {}
@@ -183,13 +206,23 @@ def list_players(prices: dict[str, float]) -> list[dict[str, Any]]:
 
 
 def player_detail(user_id: int, prices: dict[str, float]) -> dict[str, Any]:
-    """Everything held about one player."""
+    """Everything held about one player.
+
+    Refuses anyone list_players() would not show, so the list is the whole
+    surface rather than a filtered view over a fetchable one.
+    """
     row = userstore.query_one(
-        "SELECT id, username, display_name, is_guest, is_admin, is_blocked, "
-        "       blocked_ts, last_seen_ts, created_ts FROM users WHERE id = ?",
+        "SELECT u.id, u.username, u.display_name, u.is_guest, u.is_admin, "
+        "       u.is_blocked, u.blocked_ts, u.last_seen_ts, u.created_ts, "
+        f"       CASE WHEN {_visible_sql('u')} THEN 1 ELSE 0 END AS visible "
+        "FROM users u WHERE u.id = ?",
         (user_id,))
     if not row:
         raise AdminError("That player no longer exists.")
+    if not row.pop("visible"):
+        raise AdminError(
+            "That visitor is a guest who has not traded. The console does not "
+            "track them until they place a trade or create an account.")
 
     for f in ("is_guest", "is_admin", "is_blocked"):
         row[f] = bool(row[f])
@@ -214,13 +247,24 @@ def player_detail(user_id: int, prices: dict[str, float]) -> dict[str, Any]:
 
 def _target(user_id: int) -> dict[str, Any]:
     row = userstore.query_one(
-        "SELECT id, username, is_admin FROM users WHERE id = ?", (user_id,))
+        "SELECT id, username, is_admin, is_guest FROM users WHERE id = ?",
+        (user_id,))
     if not row:
         raise AdminError("That player no longer exists.")
     if row["is_admin"]:
         # Guards against an admin locking themselves out, and against one admin
         # removing another in a future multi-admin setup.
         raise AdminError("Administrator accounts cannot be blocked or deleted.")
+    if row["is_guest"]:
+        # Neither action does anything to a guest. There is no credential to
+        # block -- clearing the cookie mints a fresh guest row on the next
+        # request -- and purge_stale_guests() already removes untraded guests
+        # after GUEST_TTL_DAYS. Signing up is what makes someone administrable,
+        # which is the same line the leaderboard already draws.
+        raise AdminError(
+            "Guest accounts cannot be blocked or deleted. A guest has no "
+            "login to block, and untraded guests are removed automatically "
+            f"after {config.GUEST_TTL_DAYS} days.")
     return row
 
 

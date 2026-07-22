@@ -118,6 +118,50 @@ def main() -> None:
         except admin.AdminError:
             check(name, True)
 
+    # --- guests are visitors, not players ---------------------------------
+    # Trading is the visibility line: every cookie-less request mints a guest
+    # row, so an untraded one is usually a crawler and never someone the
+    # operator has anything to act on.
+    lurker = accounts.create_guest(10_000)
+    trader = accounts.create_guest(10_000)
+    pf.buy(trader["id"], "BTC", 100.0, 1, usd=1000)
+
+    listed = {p["id"] for p in admin.list_players({"BTC": 120.0})}
+    check("untraded guest is not listed", lurker["id"] not in listed)
+    check("guest who traded is listed", trader["id"] in listed)
+    check("registered players are unaffected", u["id"] in listed)
+
+    # Hidden must mean hidden, not merely unpainted: the list and the
+    # by-id fetch have to agree or this is cosmetic.
+    try:
+        admin.player_detail(lurker["id"], {"BTC": 120.0})
+        check("untraded guest cannot be fetched by id", False)
+    except admin.AdminError:
+        check("untraded guest cannot be fetched by id", True)
+    check("traded guest can be fetched by id",
+          admin.player_detail(trader["id"], {"BTC": 120.0})["id"] == trader["id"])
+
+    for name, fn in [
+        ("guests cannot be blocked", lambda: admin.set_blocked(trader["id"], True)),
+        ("guests cannot be deleted", lambda: admin.delete_player(trader["id"])),
+        ("guests cannot have a password reset",
+         lambda: admin.reset_password(trader["id"], "password12345")),
+    ]:
+        try:
+            fn()
+            check(name, False)
+        except admin.AdminError:
+            check(name, True)
+    check("a refused block leaves the guest untouched",
+          userstore.query_one(
+              "SELECT is_blocked FROM users WHERE id = ?",
+              (trader["id"],))["is_blocked"] in (0, False))
+
+    # stats() deliberately still counts every guest -- the console stops
+    # listing them individually, it does not stop reporting the traffic.
+    check("stats still counts untraded guests",
+          admin.stats({})["guests"] >= 2)
+
     # --- delete releases the username -------------------------------------
     admin.delete_player(u["id"])
     check("user row removed",
