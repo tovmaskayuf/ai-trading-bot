@@ -777,6 +777,14 @@ the rule that passwords are never revealed — `list_players()` and
 `player_detail()` still return `password: None`, because those feed a UI and a
 hash is not a password.
 
+**A browser download lands at mode 644, not 600.** The `O_EXCL`/`0600` above is
+the CLI tool creating the file itself; the endpoint hands bytes to the browser,
+which saves them under the user's umask. So a dump taken the easy way is
+world-readable, containing every account's hash, usually in `~/Downloads` or on
+the Desktop. `chmod 600` it and move it somewhere deliberate. This is not
+fixable from the server side — no header controls the permissions the browser
+writes with.
+
 ### Rotating the expired Postgres
 
 **This instance: `tt-trading-db` was created 2026-07-21.**
@@ -797,6 +805,15 @@ keeps serving normally while every account is wiped on the next restart.
 assumes one. Take it well before the date, and take a rehearsal one early —
 discovering the External connection string is wrong on expiry day is the bad
 version of this.
+
+**Rehearsed on 2026-07-22 with a real production dump**, not just a synthetic
+one: 83 users, 4 trades, 5,674 equity rows and `app_meta` restored into a
+scratch PostgreSQL 17.10, and a signup afterwards took id 90 without colliding
+with the backup's max of 89 — which is the assertion that the sequence reset
+actually works. Row counts matched production exactly apart from `user_equity`,
+which had gained two rows in the minutes between, as it should. Re-run that
+rehearsal after any change to the restore tool; "the tool exists" and "the tool
+has restored real data" are different claims.
 
 Steps split by who can do them, because half of it is dashboard-only:
 
