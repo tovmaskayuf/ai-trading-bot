@@ -560,10 +560,15 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
   color:var(--accent); font:inherit; font-size:12.5px; text-decoration:underline;
 }
 
+/* rank | player | started | P&L | return | trades */
 .lb-row {
-  display:grid; grid-template-columns:52px 1fr 108px 96px 76px;
+  display:grid; grid-template-columns:52px 1fr 104px 116px 88px 68px;
   gap:12px; align-items:center; padding:11px 14px;
   border-bottom:1px solid var(--border); font-size:13px;
+  /* Six columns will not fit a phone. The board scrolls sideways inside its
+     own panel rather than letting the numbers crush together or pushing the
+     whole page into a horizontal scroll. */
+  min-width:640px;
 }
 .lb-row.head { color:var(--text-muted); font-size:11px; text-transform:uppercase;
   letter-spacing:.05em; border-bottom-color:var(--border-bright); }
@@ -574,6 +579,12 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
 .lb-name { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .lb-name .youtag { color:var(--accent); font-weight:500; font-size:11px; margin-left:6px; }
 .lb-num { font-family:var(--mono); text-align:right; }
+/* Opening balance is context, not achievement -- muted so the eye lands on the
+   profit and the return, which are what the ranking is actually built on. */
+.lb-start, .ad-start { color:var(--text-muted); }
+/* The rows are wider than a phone; scroll them here so the page body never
+   scrolls sideways. The panel clips, so the scroller has to be inside it. */
+#leaderBody, #adminBody { overflow-x:auto; }
 .lb-empty { padding:30px 14px; text-align:center; color:var(--text-secondary); font-size:13px; }
 
 /* ── Master console ────────────────────────────────────────────────────── */
@@ -587,10 +598,12 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
   outline:none; min-width:190px;
 }
 .admin-search:focus { border-color:var(--accent); }
+/* player | started | value | P&L | return | trades | actions */
 .ad-row {
-  display:grid; grid-template-columns:1fr 108px 88px 66px 210px;
+  display:grid; grid-template-columns:1fr 96px 104px 112px 80px 58px 210px;
   gap:12px; align-items:center; padding:11px 14px;
   border-bottom:1px solid var(--border); font-size:13px;
+  min-width:1000px;   /* see .lb-row -- scrolls inside the panel */
 }
 .ad-row.head { color:var(--text-muted); font-size:11px; text-transform:uppercase;
   letter-spacing:.05em; border-bottom-color:var(--border-bright); }
@@ -621,6 +634,28 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
 .ad-pair .ad-btn + .ad-btn { border-left:1px solid var(--border); }
 .ad-pair .ad-btn.danger { color:var(--critical); }
 .ad-pair .ad-btn.danger:hover:not(:disabled) { background:var(--critical-dim); }
+
+/* Player detail panel, reusing the trade drawer's slot on the right. */
+.dr-head { display:flex; align-items:flex-start; gap:12px; padding:20px 22px 14px;
+  border-bottom:1px solid var(--border); position:sticky; top:0;
+  background:var(--surface-0); z-index:2; }
+.dr-head h2 { font-size:17px; letter-spacing:-.02em; }
+.dr-head .modal-x { position:static; margin-left:auto; flex:none; }
+.dr-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+  gap:1px; background:var(--border); border-bottom:1px solid var(--border); }
+.dr-stat { background:var(--surface-0); padding:12px 14px; }
+.dr-stat .label { font-size:10.5px; color:var(--text-muted); text-transform:uppercase;
+  letter-spacing:.05em; margin-bottom:3px; }
+.dr-stat .value { font-size:15px; font-family:var(--mono); }
+.dr-sec { padding:16px 22px; border-bottom:1px solid var(--border); }
+.dr-sec h3 { font-size:11.5px; color:var(--text-muted); text-transform:uppercase;
+  letter-spacing:.05em; margin-bottom:10px; }
+.dr-hold, .dr-trade { display:grid; align-items:center; gap:10px; padding:8px 0;
+  border-bottom:1px solid var(--border); font-size:12.5px; }
+.dr-hold { grid-template-columns:1fr 92px 68px; }
+.dr-hold:last-child, .dr-trade:last-child { border-bottom:0; }
+.dr-trade { grid-template-columns:52px 1fr 84px 72px 108px; }
+.dr-note { padding:14px 22px 26px; font-size:11.5px; color:var(--text-muted); line-height:1.5; }
 
 .site-foot {
   margin-top:28px; padding:18px 2px 4px; border-top:1px solid var(--border);
@@ -914,11 +949,18 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
     <div class="panel">
       <div class="panel-head">
         <h2 data-i18n="leaderboard"></h2>
-        <span class="hint" data-i18n="leaderHint"></span>
+        <!-- Set by paintLeaders() per mode, so no data-i18n here: applyStatic()
+             would overwrite it with the generic hint on every language switch. -->
+        <span class="hint" id="leaderHint"></span>
         <div class="spacer"></div>
         <span class="bs" id="leaderCount"></span>
       </div>
-      <div id="leaderBody"></div>
+      <div class="ranges lb-modes" id="leaderModes">
+        <button data-mode="pnl" class="on" data-i18n="lbPnl"></button>
+        <button data-mode="value" data-i18n="value"></button>
+        <button data-mode="lost" data-i18n="lbLost"></button>
+      </div>
+      <div class="lb-scroll"><div id="leaderBody"></div></div>
     </div>
   </section>
 
@@ -979,10 +1021,12 @@ input[type=range]::-moz-range-thumb { width:15px; height:15px; border-radius:50%
 /* ══ Internationalization ═══════════════════════════════════════════════ */
 const I18N = {
 en: {
+  loading:"Loading…", noHoldings:"No open holdings.", noTrades:"No trades yet.", recentTrades:"Recent trades",
   adminShowGuests:"Show guests", adminHidden:"{n} guest accounts hidden",
   accountBlocked:"Your account has been blocked. Please contact the administrator.",
   master:"Master", confirmPassword:"Confirm password", passwordMismatch:"The two passwords do not match.", adminTitle:"All players", adminHint:"Full access. Block, delete or reset any account.", adminSearch:"Search players…", adminActions:"Actions", adminView:"View", adminReset:"Reset password", adminBlock:"Block", adminUnblock:"Unblock", adminDelete:"Delete", adminNoMatch:"No players match that search.", adminDenied:"Administrator access is required.", adminAccounts:"Accounts", adminRegistered:"Registered", adminGuests:"Guests", adminBlocked:"Blocked", adminTrades:"Trades", adminStore:"Store", adminActive:"Active", adminStatus:"Status", adminSessions:"Active sessions", adminDisplayName:"Display name", adminResetPrompt:"Enter a new password for {name}:", adminResetDone:"Password reset for {name}.", adminBlockedDone:"{name} has been blocked.", adminUnblocked:"{name} has been unblocked.", adminDeleteConfirm:"Delete {name} permanently? Their portfolio and history are erased and the username becomes available again.", adminDeleted:"{name} deleted. The username is free again.", adminPwNote:"Stored as a one-way hash — it cannot be shown. Use Reset password.", guest:"Guest", guestNoLogin:"guest · no login", blocked:"Blocked", joined:"joined",
-  leaderboard:"Leaderboard", leaderHint:"Ranked by total return", leaderEmpty:"No players yet — sign up to claim the top spot.", leaderGuest:"You are playing as a guest. Sign up to appear on the leaderboard.", leaderError:"Could not load the leaderboard.", rank:"Rank", player:"Player", value:"Value", returnPct:"Return", trades:"Trades", you:"you", playerCount:"{n} players", signUp:"Sign up", logIn:"Log in", logOut:"Log out", createAccount:"Create account", username:"Username", password:"Password", signUpSub:"Create an account to save your progress and join the leaderboard.", signUpKeeps:"Your current portfolio comes with you — nothing is lost.", logInSub:"Welcome back. Log in to pick up where you left off.", haveAccount:"Already have an account?", noAccount:"Need an account?", welcomeNew:"Welcome, {name}! You are on the leaderboard.", welcomeBack:"Welcome back, {name}.", loggedOut:"Logged out. You are playing as a guest.", confirmLogout:"Log out of {name}?",
+  lbPnl:"P/L", lbLost:"Lost", lbStart:"Start", leaderHintPnl:"Ranked by profit and loss", leaderHintValue:"Ranked by portfolio value", leaderHintLost:"Ranked by biggest losses — furthest below their starting balance first",
+  leaderboard:"Leaderboard", leaderHint:"Ranked by total return", leaderEmpty:"No players yet — sign up to claim the top spot.", leaderGuest:"You are playing as a guest. Sign up to appear on the leaderboard.", leaderError:"Could not load the leaderboard.", rank:"Rank", player:"Player", value:"Value", started:"Started", pnl:"P&L", returnPct:"Return", trades:"Trades", you:"you", playerCount:"{n} players", signUp:"Sign up", logIn:"Log in", logOut:"Log out", createAccount:"Create account", username:"Username", password:"Password", signUpSub:"Create an account to save your progress and join the leaderboard.", signUpKeeps:"Your current portfolio comes with you — nothing is lost.", logInSub:"Welcome back. Log in to pick up where you left off.", haveAccount:"Already have an account?", noAccount:"Need an account?", welcomeNew:"Welcome, {name}! You are on the leaderboard.", welcomeBack:"Welcome back, {name}.", loggedOut:"Logged out. You are playing as a guest.", confirmLogout:"Log out of {name}?",
   tagline:"Practice cryptocurrency trading with live market data and AI-powered ratings — zero risk, real skills.",
   langTitle:"Language", langHint:"Choose your interface language.",
   assetsTitle:"Assets to Follow", assetsHint:"Switch on the cryptocurrencies you want to track and trade.",
@@ -1041,10 +1085,12 @@ en: {
   errGeneric:"Something went wrong. Please try again.",
 },
 hy: {
+  loading:"Բեռնվում է…", noHoldings:"Բաց դիրքեր չկան։", noTrades:"Դեռ գործարքներ չկան։", recentTrades:"Վերջին գործարքները",
   adminShowGuests:"Ցուցադրել հյուրերին", adminHidden:"{n} հյուր հաշիվ թաքցված է",
   accountBlocked:"Ձեր հաշիվն արգելափակված է։ Խնդրում ենք կապվել ադմինիստրատորի հետ։",
   master:"Գլխավոր", confirmPassword:"Հաստատել գաղտնաբառը", passwordMismatch:"Գաղտնաբառերը չեն համընկնում։", adminTitle:"Բոլոր խաղացողները", adminHint:"Լիարժեք մուտք։ Արգելափակել, ջնջել կամ վերականգնել ցանկացած հաշիվ։", adminSearch:"Որոնել խաղացողներ…", adminActions:"Գործողություններ", adminView:"Դիտել", adminReset:"Վերականգնել գաղտնաբառը", adminBlock:"Արգելափակել", adminUnblock:"Ապաարգելափակել", adminDelete:"Ջնջել", adminNoMatch:"Համընկնող խաղացողներ չկան։", adminDenied:"Պահանջվում է ադմինիստրատորի մուտք։", adminAccounts:"Հաշիվներ", adminRegistered:"Գրանցված", adminGuests:"Հյուրեր", adminBlocked:"Արգելափակված", adminTrades:"Գործարքներ", adminStore:"Պահոց", adminActive:"Ակտիվ", adminStatus:"Կարգավիճակ", adminSessions:"Ակտիվ սեսիաներ", adminDisplayName:"Ցուցադրվող անուն", adminResetPrompt:"Մուտքագրեք նոր գաղտնաբառ {name}-ի համար՝", adminResetDone:"{name}-ի գաղտնաբառը վերականգնվեց։", adminBlockedDone:"{name}-ը արգելափակվեց։", adminUnblocked:"{name}-ը ապաարգելափակվեց։", adminDeleteConfirm:"Ջնջե՞լ {name}-ը ընդմիշտ։ Պորտֆելը և պատմությունը կջնջվեն, օգտանունը կազատվի։", adminDeleted:"{name}-ը ջնջվեց։ Օգտանունն ազատ է։", adminPwNote:"Պահվում է միակողմանի հեշով — հնարավոր չէ ցուցադրել։ Օգտագործեք վերականգնումը։", guest:"Հյուր", guestNoLogin:"հյուր · առանց մուտքի", blocked:"Արգելափակված", joined:"միացել է",
-  leaderboard:"Առաջատարներ", leaderHint:"Դասավորված ըստ ընդհանուր եկամտի", leaderEmpty:"Դեռ խաղացողներ չկան — գրանցվեք և զբաղեցրեք առաջին տեղը։", leaderGuest:"Դուք խաղում եք որպես հյուր։ Գրանցվեք՝ ցուցակում հայտնվելու համար։", leaderError:"Չհաջողվեց բեռնել առաջատարների ցանկը։", rank:"Տեղ", player:"Խաղացող", value:"Արժեք", returnPct:"Եկամուտ", trades:"Գործարքներ", you:"դուք", playerCount:"{n} խաղացող", signUp:"Գրանցվել", logIn:"Մուտք", logOut:"Ելք", createAccount:"Ստեղծել հաշիվ", username:"Օգտանուն", password:"Գաղտնաբառ", signUpSub:"Ստեղծեք հաշիվ՝ առաջընթացը պահպանելու և ցուցակին միանալու համար։", signUpKeeps:"Ձեր ընթացիկ պորտֆելը մնում է ձեզ հետ — ոչինչ չի կորչում։", logInSub:"Բարի վերադարձ։ Մուտք գործեք՝ շարունակելու համար։", haveAccount:"Արդեն ունե՞ք հաշիվ։", noAccount:"Հաշիվ պե՞տք է։", welcomeNew:"Բարի գալուստ, {name}: Դուք ցուցակում եք։", welcomeBack:"Բարի վերադարձ, {name}։", loggedOut:"Դուրս եկաք։ Խաղում եք որպես հյուր։", confirmLogout:"Դուրս գա՞լ {name} հաշվից։",
+  lbPnl:"Շահույթ/վնաս", lbLost:"Կորուստ", lbStart:"Մեկնարկ", leaderHintPnl:"Դասավորված ըստ շահույթի և վնասի", leaderHintValue:"Դասավորված ըստ պորտֆելի արժեքի", leaderHintLost:"Դասավորված ըստ ամենամեծ կորուստների — մեկնարկային գումարից ամենահեռուն ընկածն առաջինը",
+  leaderboard:"Առաջատարներ", leaderHint:"Դասավորված ըստ ընդհանուր եկամտի", leaderEmpty:"Դեռ խաղացողներ չկան — գրանցվեք և զբաղեցրեք առաջին տեղը։", leaderGuest:"Դուք խաղում եք որպես հյուր։ Գրանցվեք՝ ցուցակում հայտնվելու համար։", leaderError:"Չհաջողվեց բեռնել առաջատարների ցանկը։", rank:"Տեղ", player:"Խաղացող", value:"Արժեք", started:"Մեկնարկ", pnl:"Շ/Վ", returnPct:"Եկամուտ", trades:"Գործարքներ", you:"դուք", playerCount:"{n} խաղացող", signUp:"Գրանցվել", logIn:"Մուտք", logOut:"Ելք", createAccount:"Ստեղծել հաշիվ", username:"Օգտանուն", password:"Գաղտնաբառ", signUpSub:"Ստեղծեք հաշիվ՝ առաջընթացը պահպանելու և ցուցակին միանալու համար։", signUpKeeps:"Ձեր ընթացիկ պորտֆելը մնում է ձեզ հետ — ոչինչ չի կորչում։", logInSub:"Բարի վերադարձ։ Մուտք գործեք՝ շարունակելու համար։", haveAccount:"Արդեն ունե՞ք հաշիվ։", noAccount:"Հաշիվ պե՞տք է։", welcomeNew:"Բարի գալուստ, {name}: Դուք ցուցակում եք։", welcomeBack:"Բարի վերադարձ, {name}։", loggedOut:"Դուրս եկաք։ Խաղում եք որպես հյուր։", confirmLogout:"Դուրս գա՞լ {name} հաշվից։",
   tagline:"Փորձեք կրիպտոարժույթների առևտուրը իրական շուկայական տվյալներով և AI գնահատականներով — զրո ռիսկ, իրական հմտություններ։",
   langTitle:"Լեզու", langHint:"Ընտրեք ինտերֆեյսի լեզուն։",
   assetsTitle:"Հետևվող ակտիվներ", assetsHint:"Միացրեք այն կրիպտոարժույթները, որոնց ուզում եք հետևել և առևտուր անել։",
@@ -1103,10 +1149,12 @@ hy: {
   errGeneric:"Ինչ-որ բան սխալ գնաց։ Խնդրում ենք կրկին փորձել։",
 },
 uk: {
+  loading:"Завантаження…", noHoldings:"Немає відкритих позицій.", noTrades:"Ще немає угод.", recentTrades:"Останні угоди",
   adminShowGuests:"Показати гостей", adminHidden:"{n} гостьових акаунтів приховано",
   accountBlocked:"Ваш акаунт заблоковано. Зверніться до адміністратора.",
   master:"Майстер", confirmPassword:"Підтвердьте пароль", passwordMismatch:"Паролі не збігаються.", adminTitle:"Усі гравці", adminHint:"Повний доступ. Блокуйте, видаляйте або скидайте будь-який акаунт.", adminSearch:"Пошук гравців…", adminActions:"Дії", adminView:"Переглянути", adminReset:"Скинути пароль", adminBlock:"Заблокувати", adminUnblock:"Розблокувати", adminDelete:"Видалити", adminNoMatch:"Немає гравців за цим запитом.", adminDenied:"Потрібен доступ адміністратора.", adminAccounts:"Акаунти", adminRegistered:"Зареєстровані", adminGuests:"Гості", adminBlocked:"Заблоковані", adminTrades:"Угоди", adminStore:"Сховище", adminActive:"Активний", adminStatus:"Статус", adminSessions:"Активні сесії", adminDisplayName:"Відображуване ім'я", adminResetPrompt:"Введіть новий пароль для {name}:", adminResetDone:"Пароль для {name} скинуто.", adminBlockedDone:"{name} заблоковано.", adminUnblocked:"{name} розблоковано.", adminDeleteConfirm:"Видалити {name} назавжди? Портфель та історію буде стерто, а ім'я користувача звільниться.", adminDeleted:"{name} видалено. Ім'я користувача знову вільне.", adminPwNote:"Зберігається як односторонній хеш — показати неможливо. Скиньте пароль.", guest:"Гість", guestNoLogin:"гість · без входу", blocked:"Заблоковано", joined:"приєднався",
-  leaderboard:"Рейтинг", leaderHint:"За загальною дохідністю", leaderEmpty:"Гравців ще немає — зареєструйтеся й посядьте перше місце.", leaderGuest:"Ви граєте як гість. Зареєструйтеся, щоб потрапити до рейтингу.", leaderError:"Не вдалося завантажити рейтинг.", rank:"Місце", player:"Гравець", value:"Вартість", returnPct:"Дохідність", trades:"Угоди", you:"ви", playerCount:"{n} гравців", signUp:"Реєстрація", logIn:"Увійти", logOut:"Вийти", createAccount:"Створити акаунт", username:"Ім'я користувача", password:"Пароль", signUpSub:"Створіть акаунт, щоб зберегти прогрес і потрапити до рейтингу.", signUpKeeps:"Ваш поточний портфель залишається з вами — нічого не втрачено.", logInSub:"З поверненням. Увійдіть, щоб продовжити.", haveAccount:"Вже маєте акаунт?", noAccount:"Потрібен акаунт?", welcomeNew:"Вітаємо, {name}! Ви в рейтингу.", welcomeBack:"З поверненням, {name}.", loggedOut:"Ви вийшли. Граєте як гість.", confirmLogout:"Вийти з {name}?",
+  lbPnl:"Прибуток/збиток", lbLost:"Збитки", lbStart:"Старт", leaderHintPnl:"За прибутком і збитком", leaderHintValue:"За вартістю портфеля", leaderHintLost:"За найбільшими збитками — найдалі від стартового балансу першими",
+  leaderboard:"Рейтинг", leaderHint:"За загальною дохідністю", leaderEmpty:"Гравців ще немає — зареєструйтеся й посядьте перше місце.", leaderGuest:"Ви граєте як гість. Зареєструйтеся, щоб потрапити до рейтингу.", leaderError:"Не вдалося завантажити рейтинг.", rank:"Місце", player:"Гравець", value:"Вартість", started:"Старт", pnl:"П/З", returnPct:"Дохідність", trades:"Угоди", you:"ви", playerCount:"{n} гравців", signUp:"Реєстрація", logIn:"Увійти", logOut:"Вийти", createAccount:"Створити акаунт", username:"Ім'я користувача", password:"Пароль", signUpSub:"Створіть акаунт, щоб зберегти прогрес і потрапити до рейтингу.", signUpKeeps:"Ваш поточний портфель залишається з вами — нічого не втрачено.", logInSub:"З поверненням. Увійдіть, щоб продовжити.", haveAccount:"Вже маєте акаунт?", noAccount:"Потрібен акаунт?", welcomeNew:"Вітаємо, {name}! Ви в рейтингу.", welcomeBack:"З поверненням, {name}.", loggedOut:"Ви вийшли. Граєте як гість.", confirmLogout:"Вийти з {name}?",
   tagline:"Практикуйте торгівлю криптовалютами на реальних ринкових даних з рейтингами на основі ШІ — без ризику, зі справжніми навичками.",
   langTitle:"Мова", langHint:"Оберіть мову інтерфейсу.",
   assetsTitle:"Активи для відстеження", assetsHint:"Увімкніть криптовалюти, які хочете відстежувати й торгувати.",
@@ -1165,10 +1213,12 @@ uk: {
   errGeneric:"Щось пішло не так. Спробуйте ще раз.",
 },
 es: {
+  loading:"Cargando…", noHoldings:"Sin posiciones abiertas.", noTrades:"Aún no hay operaciones.", recentTrades:"Operaciones recientes",
   adminShowGuests:"Mostrar invitados", adminHidden:"{n} cuentas de invitado ocultas",
   accountBlocked:"Tu cuenta ha sido bloqueada. Contacta con el administrador.",
   master:"Maestro", confirmPassword:"Confirmar contraseña", passwordMismatch:"Las contraseñas no coinciden.", adminTitle:"Todos los jugadores", adminHint:"Acceso total. Bloquea, elimina o restablece cualquier cuenta.", adminSearch:"Buscar jugadores…", adminActions:"Acciones", adminView:"Ver", adminReset:"Restablecer contraseña", adminBlock:"Bloquear", adminUnblock:"Desbloquear", adminDelete:"Eliminar", adminNoMatch:"Ningún jugador coincide.", adminDenied:"Se requiere acceso de administrador.", adminAccounts:"Cuentas", adminRegistered:"Registrados", adminGuests:"Invitados", adminBlocked:"Bloqueados", adminTrades:"Operaciones", adminStore:"Almacén", adminActive:"Activo", adminStatus:"Estado", adminSessions:"Sesiones activas", adminDisplayName:"Nombre visible", adminResetPrompt:"Introduce una nueva contraseña para {name}:", adminResetDone:"Contraseña restablecida para {name}.", adminBlockedDone:"{name} ha sido bloqueado.", adminUnblocked:"{name} ha sido desbloqueado.", adminDeleteConfirm:"¿Eliminar {name} permanentemente? Su cartera e historial se borran y el nombre de usuario queda libre.", adminDeleted:"{name} eliminado. El nombre de usuario está libre.", adminPwNote:"Se guarda como hash unidireccional: no se puede mostrar. Usa Restablecer contraseña.", guest:"Invitado", guestNoLogin:"invitado · sin acceso", blocked:"Bloqueado", joined:"se unió",
-  leaderboard:"Clasificación", leaderHint:"Ordenado por rendimiento total", leaderEmpty:"Aún no hay jugadores: regístrate y ocupa el primer puesto.", leaderGuest:"Estás jugando como invitado. Regístrate para aparecer en la clasificación.", leaderError:"No se pudo cargar la clasificación.", rank:"Puesto", player:"Jugador", value:"Valor", returnPct:"Rendimiento", trades:"Operaciones", you:"tú", playerCount:"{n} jugadores", signUp:"Registrarse", logIn:"Iniciar sesión", logOut:"Cerrar sesión", createAccount:"Crear cuenta", username:"Usuario", password:"Contraseña", signUpSub:"Crea una cuenta para guardar tu progreso y entrar en la clasificación.", signUpKeeps:"Tu cartera actual te acompaña: no se pierde nada.", logInSub:"Bienvenido de nuevo. Inicia sesión para continuar.", haveAccount:"¿Ya tienes cuenta?", noAccount:"¿Necesitas una cuenta?", welcomeNew:"¡Bienvenido, {name}! Ya estás en la clasificación.", welcomeBack:"Bienvenido de nuevo, {name}.", loggedOut:"Sesión cerrada. Juegas como invitado.", confirmLogout:"¿Cerrar la sesión de {name}?",
+  lbPnl:"G/P", lbLost:"Pérdidas", lbStart:"Inicio", leaderHintPnl:"Ordenado por ganancias y pérdidas", leaderHintValue:"Ordenado por valor de la cartera", leaderHintLost:"Ordenado por mayores pérdidas: primero quien está más por debajo de su saldo inicial",
+  leaderboard:"Clasificación", leaderHint:"Ordenado por rendimiento total", leaderEmpty:"Aún no hay jugadores: regístrate y ocupa el primer puesto.", leaderGuest:"Estás jugando como invitado. Regístrate para aparecer en la clasificación.", leaderError:"No se pudo cargar la clasificación.", rank:"Puesto", player:"Jugador", value:"Valor", started:"Inicial", pnl:"P&G", returnPct:"Rendimiento", trades:"Operaciones", you:"tú", playerCount:"{n} jugadores", signUp:"Registrarse", logIn:"Iniciar sesión", logOut:"Cerrar sesión", createAccount:"Crear cuenta", username:"Usuario", password:"Contraseña", signUpSub:"Crea una cuenta para guardar tu progreso y entrar en la clasificación.", signUpKeeps:"Tu cartera actual te acompaña: no se pierde nada.", logInSub:"Bienvenido de nuevo. Inicia sesión para continuar.", haveAccount:"¿Ya tienes cuenta?", noAccount:"¿Necesitas una cuenta?", welcomeNew:"¡Bienvenido, {name}! Ya estás en la clasificación.", welcomeBack:"Bienvenido de nuevo, {name}.", loggedOut:"Sesión cerrada. Juegas como invitado.", confirmLogout:"¿Cerrar la sesión de {name}?",
   tagline:"Practica el trading de criptomonedas con datos de mercado en vivo y calificaciones impulsadas por IA — cero riesgo, habilidades reales.",
   langTitle:"Idioma", langHint:"Elige el idioma de la interfaz.",
   assetsTitle:"Activos a seguir", assetsHint:"Activa las criptomonedas que quieras seguir y operar.",
@@ -1227,10 +1277,12 @@ es: {
   errGeneric:"Algo salió mal. Inténtalo de nuevo.",
 },
 el: {
+  loading:"Φόρτωση…", noHoldings:"Καμία ανοιχτή θέση.", noTrades:"Καμία συναλλαγή ακόμη.", recentTrades:"Πρόσφατες συναλλαγές",
   adminShowGuests:"Εμφάνιση επισκεπτών", adminHidden:"{n} λογαριασμοί επισκεπτών κρυμμένοι",
   accountBlocked:"Ο λογαριασμός σας έχει αποκλειστεί. Επικοινωνήστε με τον διαχειριστή.",
   master:"Κύριος", confirmPassword:"Επιβεβαίωση κωδικού", passwordMismatch:"Οι κωδικοί δεν ταιριάζουν.", adminTitle:"Όλοι οι παίκτες", adminHint:"Πλήρης πρόσβαση. Αποκλείστε, διαγράψτε ή επαναφέρετε οποιονδήποτε λογαριασμό.", adminSearch:"Αναζήτηση παικτών…", adminActions:"Ενέργειες", adminView:"Προβολή", adminReset:"Επαναφορά κωδικού", adminBlock:"Αποκλεισμός", adminUnblock:"Άρση αποκλεισμού", adminDelete:"Διαγραφή", adminNoMatch:"Κανένας παίκτης δεν ταιριάζει.", adminDenied:"Απαιτείται πρόσβαση διαχειριστή.", adminAccounts:"Λογαριασμοί", adminRegistered:"Εγγεγραμμένοι", adminGuests:"Επισκέπτες", adminBlocked:"Αποκλεισμένοι", adminTrades:"Συναλλαγές", adminStore:"Αποθήκη", adminActive:"Ενεργός", adminStatus:"Κατάσταση", adminSessions:"Ενεργές συνεδρίες", adminDisplayName:"Εμφανιζόμενο όνομα", adminResetPrompt:"Εισαγάγετε νέο κωδικό για τον/την {name}:", adminResetDone:"Ο κωδικός για {name} επαναφέρθηκε.", adminBlockedDone:"Ο/Η {name} αποκλείστηκε.", adminUnblocked:"Ο/Η {name} ξεμπλοκαρίστηκε.", adminDeleteConfirm:"Οριστική διαγραφή του/της {name}; Το χαρτοφυλάκιο και το ιστορικό διαγράφονται και το όνομα χρήστη ελευθερώνεται.", adminDeleted:"Ο/Η {name} διαγράφηκε. Το όνομα χρήστη είναι ξανά διαθέσιμο.", adminPwNote:"Αποθηκεύεται ως μονόδρομο hash — δεν μπορεί να εμφανιστεί. Χρησιμοποιήστε Επαναφορά κωδικού.", guest:"Επισκέπτης", guestNoLogin:"επισκέπτης · χωρίς σύνδεση", blocked:"Αποκλεισμένος", joined:"εγγράφηκε",
-  leaderboard:"Κατάταξη", leaderHint:"Ταξινόμηση κατά συνολική απόδοση", leaderEmpty:"Δεν υπάρχουν παίκτες ακόμη — εγγραφείτε και πάρτε την πρώτη θέση.", leaderGuest:"Παίζετε ως επισκέπτης. Εγγραφείτε για να εμφανιστείτε στην κατάταξη.", leaderError:"Δεν ήταν δυνατή η φόρτωση της κατάταξης.", rank:"Θέση", player:"Παίκτης", value:"Αξία", returnPct:"Απόδοση", trades:"Συναλλαγές", you:"εσείς", playerCount:"{n} παίκτες", signUp:"Εγγραφή", logIn:"Σύνδεση", logOut:"Αποσύνδεση", createAccount:"Δημιουργία λογαριασμού", username:"Όνομα χρήστη", password:"Κωδικός", signUpSub:"Δημιουργήστε λογαριασμό για να αποθηκεύσετε την πρόοδό σας και να μπείτε στην κατάταξη.", signUpKeeps:"Το τρέχον χαρτοφυλάκιό σας σας ακολουθεί — τίποτα δεν χάνεται.", logInSub:"Καλώς ορίσατε ξανά. Συνδεθείτε για να συνεχίσετε.", haveAccount:"Έχετε ήδη λογαριασμό;", noAccount:"Χρειάζεστε λογαριασμό;", welcomeNew:"Καλώς ήρθατε, {name}! Είστε στην κατάταξη.", welcomeBack:"Καλώς ήρθατε ξανά, {name}.", loggedOut:"Αποσυνδεθήκατε. Παίζετε ως επισκέπτης.", confirmLogout:"Αποσύνδεση από {name};",
+  lbPnl:"Κέρδη/Ζημίες", lbLost:"Ζημίες", lbStart:"Αρχικό", leaderHintPnl:"Ταξινόμηση κατά κέρδη και ζημίες", leaderHintValue:"Ταξινόμηση κατά αξία χαρτοφυλακίου", leaderHintLost:"Ταξινόμηση κατά μεγαλύτερες ζημίες — πρώτα όσοι απέχουν περισσότερο από το αρχικό τους υπόλοιπο",
+  leaderboard:"Κατάταξη", leaderHint:"Ταξινόμηση κατά συνολική απόδοση", leaderEmpty:"Δεν υπάρχουν παίκτες ακόμη — εγγραφείτε και πάρτε την πρώτη θέση.", leaderGuest:"Παίζετε ως επισκέπτης. Εγγραφείτε για να εμφανιστείτε στην κατάταξη.", leaderError:"Δεν ήταν δυνατή η φόρτωση της κατάταξης.", rank:"Θέση", player:"Παίκτης", value:"Αξία", started:"Εκκίνηση", pnl:"Κ/Ζ", returnPct:"Απόδοση", trades:"Συναλλαγές", you:"εσείς", playerCount:"{n} παίκτες", signUp:"Εγγραφή", logIn:"Σύνδεση", logOut:"Αποσύνδεση", createAccount:"Δημιουργία λογαριασμού", username:"Όνομα χρήστη", password:"Κωδικός", signUpSub:"Δημιουργήστε λογαριασμό για να αποθηκεύσετε την πρόοδό σας και να μπείτε στην κατάταξη.", signUpKeeps:"Το τρέχον χαρτοφυλάκιό σας σας ακολουθεί — τίποτα δεν χάνεται.", logInSub:"Καλώς ορίσατε ξανά. Συνδεθείτε για να συνεχίσετε.", haveAccount:"Έχετε ήδη λογαριασμό;", noAccount:"Χρειάζεστε λογαριασμό;", welcomeNew:"Καλώς ήρθατε, {name}! Είστε στην κατάταξη.", welcomeBack:"Καλώς ήρθατε ξανά, {name}.", loggedOut:"Αποσυνδεθήκατε. Παίζετε ως επισκέπτης.", confirmLogout:"Αποσύνδεση από {name};",
   tagline:"Εξασκηθείτε στις συναλλαγές κρυπτονομισμάτων με ζωντανά δεδομένα αγοράς και αξιολογήσεις ΤΝ — μηδενικό ρίσκο, πραγματικές δεξιότητες.",
   langTitle:"Γλώσσα", langHint:"Επιλέξτε τη γλώσσα της διεπαφής.",
   assetsTitle:"Νομίσματα προς παρακολούθηση", assetsHint:"Ενεργοποιήστε τα κρυπτονομίσματα που θέλετε να παρακολουθείτε και να συναλλάσσεστε.",
@@ -1344,6 +1396,14 @@ function compact(v) {
   if (a >= 1e6)  return '$' + (v/1e6).toFixed(1) + 'M';
   if (a >= 1e3)  return '$' + (v/1e3).toFixed(1) + 'K';
   return '$' + v.toFixed(2);
+}
+// Profit with the sign outside the currency symbol: "-$40.00", not "$-40.00".
+// Zero carries no sign, so an untouched account reads as flat rather than as a
+// gain of nothing.
+function signedMoney(v, dp = 2) {
+  if (v == null || !isFinite(v)) return '—';
+  if (v === 0) return money(0, dp);
+  return (v > 0 ? '+' : '-') + money(Math.abs(v), dp);
 }
 const pct = (v,dp=2) => v == null || !isFinite(v) ? '—' : (v>=0?'+':'') + v.toFixed(dp) + '%';
 const num = (v,dp=1) => v == null || !isFinite(v) ? '—' : v.toFixed(dp);
@@ -2209,9 +2269,16 @@ async function renderLeaders() {
     return;
   }
 
+  // Starting capital is shown next to the result, and the money column is
+  // profit rather than the raw balance. Players choose their own opening
+  // balance on the landing screen, so a bare total ranks nobody honestly --
+  // someone who opened with $10M and never traded would show a bigger number
+  // than a player who doubled $1,000. Profit is zero for an untouched account
+  // regardless of its size, and the ranking itself is by percentage return.
   const head = `<div class="lb-row head">
     <div>${esc(t('rank'))}</div><div>${esc(t('player'))}</div>
-    <div class="lb-num">${esc(t('value'))}</div>
+    <div class="lb-num">${esc(t('started'))}</div>
+    <div class="lb-num">${esc(t('pnl'))}</div>
     <div class="lb-num">${esc(t('returnPct'))}</div>
     <div class="lb-num">${esc(t('trades'))}</div></div>`;
 
@@ -2221,7 +2288,8 @@ async function renderLeaders() {
     return `<div class="lb-row${you ? ' you' : ''}">
       <div class="lb-rank${r.rank <= 3 ? ' medal' : ''}">${medal}</div>
       <div class="lb-name">${esc(r.name)}${you ? `<span class="youtag">${esc(t('you'))}</span>` : ''}</div>
-      <div class="lb-num">${money(r.total, 2)}</div>
+      <div class="lb-num lb-start">${money(r.starting_capital, 0)}</div>
+      <div class="lb-num ${sgn(r.pnl)}">${signedMoney(r.pnl)}</div>
       <div class="lb-num ${sgn(r.return_pct)}">${pct(r.return_pct)}</div>
       <div class="lb-num">${r.trade_count}</div>
     </div>`;
@@ -2277,9 +2345,15 @@ const Admin = {
       (!q || (p.username || '').toLowerCase().includes(q) ||
              (p.name || '').toLowerCase().includes(q)));
 
+    // Starting capital sits beside the balance because players pick their own
+    // on the landing screen: a $10M account and a $1,000 account are not
+    // comparable on value alone, and without the opening figure there is no way
+    // to tell a skilled player from a generously-funded one.
     const head = `<div class="ad-row head">
       <div>${esc(t('player'))}</div>
+      <div class="ad-num">${esc(t('started'))}</div>
       <div class="ad-num">${esc(t('value'))}</div>
+      <div class="ad-num">${esc(t('pnl'))}</div>
       <div class="ad-num">${esc(t('returnPct'))}</div>
       <div class="ad-num">${esc(t('trades'))}</div>
       <div style="text-align:right">${esc(t('adminActions'))}</div></div>`;
@@ -2308,7 +2382,9 @@ const Admin = {
           <div class="ad-name">${esc(p.name)}${tags}</div>
           <div class="ad-sub">${esc(p.username || t('guestNoLogin'))} · #${p.id} · ${esc(t('joined'))} ${fmtDate(p.created_ts)}</div>
         </div>
+        <div class="ad-num ad-start">${money(p.starting_capital, 0)}</div>
         <div class="ad-num">${money(p.total, 2)}</div>
+        <div class="ad-num ${sgn(p.pnl)}">${signedMoney(p.pnl)}</div>
         <div class="ad-num ${sgn(p.return_pct)}">${pct(p.return_pct)}</div>
         <div class="ad-num">${p.trades}</div>
         <div class="ad-acts">
@@ -2362,31 +2438,90 @@ const Admin = {
     }
   },
 
+  /* A side panel, not an alert(). Browsers offer "prevent additional dialogs"
+     after a couple of alerts, and once ticked the action silently does nothing
+     -- and a dialog cannot show a chart anyway. */
   async view(id) {
-    let d;
-    try { d = await api(`/api/admin/player/${id}`); }
-    catch (e) { return toast(e.message, false); }
-    const p = d.portfolio;
-    const lines = [
-      `${t('username')}: ${d.username}`,
-      `${t('adminDisplayName')}: ${d.display_name}`,
-      `ID: ${d.id}`,
-      `${t('joined')}: ${fmtDate(d.created_ts)}`,
-      `${t('adminStatus')}: ${d.is_blocked ? t('blocked') : t('adminActive')}`
-        + (d.is_guest ? ` (${t('guest')})` : '') + (d.is_admin ? ` (${t('master')})` : ''),
-      `${t('adminSessions')}: ${d.sessions.length}`,
-      '',
-      `${t('cash')}: ${money(p.cash, 2)}`,
-      `${t('value')}: ${money(p.total, 2)}`,
-      `${t('returnPct')}: ${pct(p.total_return_pct)}`,
-      `${t('realized')}: ${money(p.realized_pnl, 2)}`,
-      `${t('fees')}: ${money(p.fees_paid, 2)}`,
-      `${t('trades')}: ${p.trade_count}`,
-      `${t('holdings')}: ${p.holdings.map(h => `${h.symbol} ${h.qty.toFixed(6)}`).join(', ') || '—'}`,
-      '',
-      `${t('password')}: ${t('adminPwNote')}`,
-    ];
-    alert(lines.join('\n'));
+    const d = $('#drawer');
+    d.innerHTML = `<div class="dr-head"><h2>${esc(t('adminView'))}</h2>
+      <button class="modal-x" id="adDrawerX" aria-label="Close">×</button></div>
+      <div class="lb-empty">${esc(t('loading'))}</div>`;
+    d.classList.add('open');
+    $('#scrim').classList.add('open');
+    $('#adDrawerX').addEventListener('click', closeDrawer);
+
+    let p;
+    try { p = await api(`/api/admin/player/${id}`); }
+    catch (e) { d.innerHTML = `<div class="lb-empty">${esc(e.message)}</div>`; return; }
+
+    const pf = p.portfolio;
+    const tags =
+      (p.is_admin ? `<span class="ad-tag admin">${esc(t('master'))}</span>` : '') +
+      (p.is_guest ? `<span class="ad-tag guest">${esc(t('guest'))}</span>` : '') +
+      (p.is_blocked ? `<span class="ad-tag blocked">${esc(t('blocked'))}</span>` : '');
+
+    const stat = (label, value, cls = '') =>
+      `<div class="dr-stat"><div class="label">${esc(t(label))}</div>
+        <div class="value num ${cls}">${value}</div></div>`;
+
+    const holdings = pf.holdings.length
+      ? pf.holdings.map(h => `<div class="dr-hold">
+          <div><strong>${esc(h.symbol)}</strong>
+            <span class="ad-sub">${h.qty.toFixed(6)} @ ${money(h.avg_cost)}</span></div>
+          <div class="lb-num">${money(h.value, 2)}</div>
+          <div class="lb-num ${sgn(h.unrealized_pct)}">${pct(h.unrealized_pct)}</div>
+        </div>`).join('')
+      : `<div class="lb-empty">${esc(t('noHoldings'))}</div>`;
+
+    const trades = pf.trades.length
+      ? pf.trades.slice(0, 30).map(tr => `<div class="dr-trade">
+          <span class="badge ${tr.side === 'BUY' ? 'b-buy' : 'b-sell'}">${esc(tr.side)}</span>
+          <span><strong>${esc(tr.symbol)}</strong>
+            <span class="ad-sub">${tr.qty.toFixed(6)} @ ${money(tr.price)}</span></span>
+          <span class="lb-num">${money(tr.value, 2)}</span>
+          <span class="lb-num ${sgn(tr.pnl)}">${tr.pnl == null ? '—' : money(tr.pnl, 2)}</span>
+          <span class="ad-sub">${fmtDate(tr.ts)}</span>
+        </div>`).join('')
+      : `<div class="lb-empty">${esc(t('noTrades'))}</div>`;
+
+    d.innerHTML = `
+      <div class="dr-head">
+        <div>
+          <h2>${esc(p.display_name)}${tags}</h2>
+          <div class="ad-sub">${esc(p.username || t('guestNoLogin'))} · #${p.id} ·
+            ${esc(t('joined'))} ${fmtDate(p.created_ts)} ·
+            ${esc(t('adminSessions'))}: ${p.sessions.length}</div>
+        </div>
+        <button class="modal-x" id="adDrawerX" aria-label="Close">×</button>
+      </div>
+
+      <div class="dr-stats">
+        ${stat('value', money(pf.total, 2))}
+        ${stat('returnPct', pct(pf.total_return_pct), sgn(pf.total_return_pct))}
+        ${stat('cash', money(pf.cash, 2))}
+        ${stat('invested', money(pf.market_value, 2))}
+        ${stat('unrealized', money(pf.unrealized_pnl, 2), sgn(pf.unrealized_pnl))}
+        ${stat('realized', money(pf.realized_pnl, 2), sgn(pf.realized_pnl))}
+        ${stat('fees', money(pf.fees_paid, 2))}
+        ${stat('trades', pf.trade_count)}
+      </div>
+
+      <div class="dr-sec"><h3>${esc(t('portfolioValue'))}</h3>
+        <svg id="adEquity" height="150" style="width:100%"></svg></div>
+
+      <div class="dr-sec"><h3>${esc(t('holdings'))}</h3>${holdings}</div>
+      <div class="dr-sec"><h3>${esc(t('recentTrades'))}</h3>${trades}</div>
+
+      <div class="dr-note">${esc(t('adminPwNote'))}</div>`;
+
+    $('#adDrawerX').addEventListener('click', closeDrawer);
+
+    // Equity curve. Drawn after innerHTML so the SVG has a measurable width.
+    const pts = (p.equity || []).map(r => r.total).filter(v => v != null);
+    requestAnimationFrame(() => lineChart('#adEquity', pts, {
+      lines: pf.starting_capital
+        ? [{ v: pf.starting_capital, color: 'var(--text-muted)' }] : [],
+    }));
   },
 };
 
