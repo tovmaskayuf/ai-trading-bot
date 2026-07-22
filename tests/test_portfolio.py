@@ -151,6 +151,33 @@ def main() -> None:
     except accounts.AuthError:
         check("cannot claim an already-registered account", True)
 
+    # --- Starting capital is disclosed, and cannot buy a ranking -----------
+    #
+    # Players choose their own opening balance on the landing screen, so a raw
+    # balance is not a score: someone who opens with $10M and never trades holds
+    # more money than someone who doubles $1,000. The board publishes what each
+    # player started with, ranks on percentage return, and reports profit rather
+    # than the balance -- so the large idle account shows a $0 profit and ranks
+    # below the small profitable one.
+    whale = accounts.create_user(f"whale_{tag}", "password12345", 10_000_000.0)
+    minnow = accounts.create_user(f"minnow_{tag}", "password12345", 1_000.0)
+    pf.buy(minnow["id"], "BTC", 100.0, userstore.now_ms(), usd=500.0)
+
+    board = {r["user_id"]: r for r in pf.leaderboard({"BTC": 200.0})}
+    w, m = board.get(whale["id"]), board.get(minnow["id"])
+
+    check("leaderboard publishes starting capital",
+          w is not None and w["starting_capital"] == 10_000_000.0)
+    check("leaderboard publishes profit", w is not None and "pnl" in w)
+    check("an untouched account shows no profit at any size",
+          w is not None and abs(w["pnl"]) < 1e-6)
+    check("profit equals total minus starting capital",
+          m is not None and abs(m["pnl"] - (m["total"] - m["starting_capital"])) < 1e-9)
+    check("the profitable small account beats the idle large one",
+          w is not None and m is not None and m["rank"] < w["rank"])
+    check("the large account is not ranked on its balance",
+          w is not None and m is not None and m["total"] < w["total"])
+
     print()
     if failures:
         print(f"{len(failures)} FAILURE(S): {failures}")
