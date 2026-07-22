@@ -77,6 +77,9 @@ async def lifespan(app: FastAPI):
 
     db.connect()
     userstore.connect()
+    # Both stores are up, so a blob left in the old ephemeral location can be
+    # moved across before anything reads settings. No-op after the first boot.
+    settings.adopt_legacy()
     admin.ensure_master()
     _engine_task = asyncio.create_task(engine.loop())
     log.info("engine started (cycle=%ds)", config.CYCLE_SECONDS)
@@ -206,7 +209,15 @@ def save_settings(payload: dict[str, Any], request: Request,
         "starting_capital" in payload
         and float(after["starting_capital"]) != float(before["starting_capital"])
     )
-    if capital_changed or not before["initialized"]:
+    # Only an actual change of capital resets. This used to also fire on
+    # `not before["initialized"]`, which was silent data loss: the start screen
+    # is shown on every page load and always posts the capital it was
+    # prefilled with, so after any restart -- and the free tier spins down
+    # every 15 idle minutes -- the first returning player to click through it
+    # had their portfolio wiped, while the response still said
+    # portfolio_reset: false. Nothing needed correcting either: a new account
+    # is already seeded at the configured capital when it is created.
+    if capital_changed:
         pf.reset(user["id"], after["starting_capital"])
 
     return {"ok": True, "settings": after, "portfolio_reset": capital_changed}
@@ -488,6 +499,37 @@ def admin_players(request: Request, response: Response) -> dict[str, Any]:
         "stats": admin.stats(prices),
         "you": admin_user["id"],
     }
+
+
+@app.get("/api/admin/export")
+def admin_export(request: Request, response: Response) -> Response:
+    """Download the whole durable store as JSON, for the 30-day rotation.
+
+    Free Render Postgres is deleted 30 days after it is created, so taking a
+    backup is a recurring chore. tools/backup_userstore.py still exists and is
+    what you want when the app is down or not deployed; this exists so the
+    routine monthly case needs nothing but a browser and the master login.
+
+    **This payload contains password hashes**, and that is deliberate: a
+    restore that dropped them would lock every player out of their own account.
+    It does not contradict the rule that passwords are never revealed --
+    list_players() and player_detail() still return `password: None`, because
+    those feed a UI, and a PBKDF2 hash is not a password. Same data
+    tools/backup_userstore.py has always written to disk.
+    """
+    require_admin(request, response)
+    dump = userstore.export_tables()
+    stamp = dump["taken_at"][:19].replace(":", "").replace("-", "").replace("T", "-")
+    return Response(
+        content=json.dumps(dump, indent=2),
+        media_type="application/json",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="userstore-backup-{stamp}.json"',
+            # Never let a proxy or the browser keep a copy of this one.
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.get("/api/admin/player/{user_id}")

@@ -14,6 +14,7 @@ work for each; the differences are confined to _Dialect below.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import queue
@@ -174,6 +175,18 @@ CREATE INDEX IF NOT EXISTS idx_user_equity_ts ON user_equity(ts);
 -- Same shape of problem: the primary key is `token`, so purge_expired_sessions
 -- scanned the table to find rows past expiry.
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_ts);
+
+-- Process-global application settings, one JSON blob per key.
+--
+-- Named app_meta rather than meta because db.py already has a `meta` table on
+-- the *ephemeral* store, and two tables with one name is a trap in a psql
+-- session. Settings live here and not there because the ephemeral disk is
+-- wiped on every restart and idle spin-down: starting_capital would revert to
+-- the $100k default and silently reseed every new visitor at the wrong number.
+CREATE TABLE IF NOT EXISTS app_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -504,6 +517,57 @@ def purge_expired_sessions() -> int:
         cur.execute(DIALECT.convert("DELETE FROM sessions WHERE expires_ts <= ?"),
                     (now_ms(),))
         return cur.rowcount or 0
+
+
+# --- App settings ----------------------------------------------------------
+#
+# Deliberately named to match db.get_meta / db.set_meta, so the two stores read
+# alike at the call site and moving a key between them is a one-word edit.
+# What differs is durability, which is the whole reason settings live here.
+
+
+def get_meta(key: str, default: str | None = None) -> str | None:
+    row = query_one("SELECT value FROM app_meta WHERE key = ?", (key,))
+    return row["value"] if row and row["value"] is not None else default
+
+
+def set_meta(key: str, value: str) -> None:
+    execute(
+        "INSERT INTO app_meta (key, value) VALUES (?,?) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
+
+# --- Export ----------------------------------------------------------------
+
+# Everything a restore needs, in dependency order for insertion. `sessions` is
+# absent on purpose: the rows are live tokens, they expire on their own, and
+# writing them to a file is a liability with no upside -- a restore ends every
+# session instead. Must stay in step with tools/backup_userstore.py, which
+# carries its own copy because it has to run against a database whose app is
+# not deployed and therefore cannot import this module.
+EXPORT_TABLES = ("app_meta", "users", "portfolios", "holdings",
+                 "user_trades", "user_equity")
+
+
+def export_tables() -> dict[str, Any]:
+    """The whole durable store as plain JSON-able data.
+
+    Same shape as tools/backup_userstore.py produces, so either can feed
+    tools/restore_userstore.py. This one runs in-process against the pool, so
+    it works on both backends and needs no connection string -- that is what
+    lets the admin console offer a download.
+    """
+    tables: dict[str, list[dict[str, Any]]] = {}
+    for table in EXPORT_TABLES:
+        # Column list comes from the row, as in the CLI tool: SELECT * keeps
+        # the dump honest about whatever shape the live schema actually has.
+        tables[table] = query(f"SELECT * FROM {table}")
+    return {
+        "taken_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "tables": tables,
+    }
 
 
 # --- Maintenance -----------------------------------------------------------

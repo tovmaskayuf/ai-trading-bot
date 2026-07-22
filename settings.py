@@ -1,17 +1,28 @@
-"""User preferences, persisted in the database.
+"""User preferences, persisted in the **durable** store.
 
 Chosen on the start screen: which assets to follow, how much virtual capital to
-begin with, and the interface language. Stored as one JSON blob in `meta` so
-the shape can evolve without schema migrations.
+begin with, and the interface language. Stored as one JSON blob under a single
+key in `userstore.app_meta`, so the shape can evolve without schema migrations.
+
+These used to live in `db.meta`, on the ephemeral market-data store, and that
+was wrong in a way that cost players their portfolios. That disk is wiped on
+every restart and idle spin-down, so `starting_capital` reverted to the $100k
+default -- silently reseeding every new visitor at a number nobody chose -- and
+`initialized` reverted to False, which used to make the next trip through the
+start screen reset that player's portfolio. Configuration is not regenerable
+the way candles are; it belongs with the accounts it configures.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import config
-import db
+import userstore
+
+log = logging.getLogger("settings")
 
 KEY = "settings"
 
@@ -24,7 +35,7 @@ DEFAULTS: dict[str, Any] = {
 
 
 def get() -> dict[str, Any]:
-    raw = db.get_meta(KEY)
+    raw = userstore.get_meta(KEY)
     if not raw:
         return dict(DEFAULTS)
     try:
@@ -71,5 +82,29 @@ def save(updates: dict[str, Any]) -> dict[str, Any]:
         current["starting_capital"] = capital
 
     current["initialized"] = True
-    db.set_meta(KEY, json.dumps(current))
+    userstore.set_meta(KEY, json.dumps(current))
     return current
+
+
+def adopt_legacy() -> None:
+    """Carry a pre-existing blob over from the ephemeral store, once.
+
+    Settings used to live in `db.meta`. On Render this is a no-op -- the deploy
+    that ships this change wipes the ephemeral disk, so there is nothing left to
+    find -- but a local checkout has a configured `db.meta` that would otherwise
+    revert to the defaults exactly once, which is the bug this whole change
+    exists to remove.
+
+    A one-shot at startup rather than a fallback inside get(): get() is called
+    on every request through require_user, plus /api/overview, /api/trade and
+    every engine cycle, and a read-path fallback would add a permanent
+    ephemeral-store hit to serve a condition that is true for at most one
+    deployment. Safe to delete once every deployment has booted on this code.
+    """
+    if userstore.get_meta(KEY):
+        return
+    import db          # local: the durable path must not depend on this module
+    raw = db.get_meta(KEY)
+    if raw:
+        userstore.set_meta(KEY, raw)
+        log.info("settings: carried over from the ephemeral store")

@@ -3,6 +3,7 @@
 Runs against a scratch database so it never touches real portfolio state.
 """
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -15,8 +16,22 @@ import config
 _tmp = tempfile.TemporaryDirectory()
 config.DB_PATH = Path(_tmp.name) / "test.db"
 
+# Settings live in the durable store now, and importing `settings` pulls in
+# userstore -- which reads DATABASE_URL at *import* time and resolves its
+# SQLite path from BASE_DIR. Both have to be set before that import.
+#
+# Unlike test_portfolio / test_admin / test_maintenance, which gate this on
+# `if not os.getenv("DATABASE_URL")` so they double as the Postgres check,
+# this suite is pinned to scratch SQLite **unconditionally**. Those tests only
+# ever create uniquely-tagged rows; this one writes a process-global singleton,
+# so running it against a shared Postgres would overwrite the live
+# starting_capital -- and leave it overwritten if a check below raised.
+os.environ.pop("DATABASE_URL", None)
+config.BASE_DIR = Path(_tmp.name)
+
 import db  # noqa: E402
 import settings  # noqa: E402
+import userstore  # noqa: E402
 from trading import manual  # noqa: E402
 
 failures: list[str] = []
