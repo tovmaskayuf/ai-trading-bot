@@ -253,6 +253,9 @@ button { font-family:inherit; }
   .land-logo, .land-title, .land-tag, .land-card, .land-cta { animation:none; opacity:1; }
   .orb { animation:none; }
   #landing, #landing.leaving { transition:none; }
+  /* The spin is feedback, not information -- the icon still changes, so
+     nothing is lost by holding it still for anyone who asked for less motion. */
+  .btn.icon.spin { animation:none; }
 }
 
 /* ══ App chrome ═════════════════════════════════════════════════════════ */
@@ -305,7 +308,17 @@ header {
   padding:7px 14px; border-radius:999px; font-size:12.5px; cursor:pointer; transition:.15s;
 }
 .btn:hover { border-color:var(--border-bright); color:var(--text-primary); }
-.btn.icon { padding:7px 10px; }
+/* Round rather than a short pill, so the press spin below turns on its own
+   centre instead of wobbling around a wider-than-tall box. */
+.btn.icon { padding:0; width:30px; height:30px;
+  display:inline-flex; align-items:center; justify-content:center; }
+.btn.icon svg { width:15px; height:15px; display:block; }
+
+/* Every icon button acknowledges a press by turning over once. On the layout
+   button the glyph is swapped at the halfway point (see cycleLayout), so the
+   same spin reads as one icon becoming the next rather than as decoration. */
+@keyframes iconSpin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+.btn.icon.spin { animation:iconSpin .45s cubic-bezier(.4,0,.2,1); }
 .tabs { display:flex; gap:3px; background:var(--surface-1); padding:3px;
   border-radius:999px; border:1px solid var(--border); }
 .tabs .btn { border:none; background:transparent; }
@@ -792,6 +805,10 @@ html.force-mobile .hero .big { font-size:28px; }
   <div class="land-bg"><div class="orb orb-1"></div><div class="orb orb-2"></div></div>
   <div class="land-wrap">
     <div class="land-top">
+      <!-- Layout override lives here and only here. It is a setup choice, made
+           once alongside language and starting capital, not something to reach
+           for mid-session -- so it does not belong in the app header. -->
+      <button class="btn icon" id="landLayout" title="Layout"></button>
       <button class="btn icon" id="landTheme" title="Theme">◐</button>
     </div>
 
@@ -878,7 +895,6 @@ html.force-mobile .hero .big { font-size:28px; }
   <button class="btn acct" id="acctBtn"><span id="acctName"></span></button>
   <select class="lang-sel" id="langSel" aria-label="Language"></select>
   <button class="btn icon" id="themeBtn" title="Theme">◐</button>
-  <button class="btn icon" id="layoutBtn" title="Layout">◫</button>
   <button class="btn icon" id="setupBtn" title="Setup">⚙</button>
 </header>
 
@@ -1101,12 +1117,13 @@ html.force-mobile .hero .big { font-size:28px; }
 /* ══ Internationalization ═══════════════════════════════════════════════ */
 const I18N = {
 en: {
+  adminStore:"Accounts", adminStoreSaved:"Saved", adminStoreTemp:"Not saved", adminStoreSavedHint:"Accounts, portfolios and standings are stored in a database and survive restarts.", adminStoreTempHint:"No database is connected — every account is erased when the server restarts or sleeps.",
   cancel:"Cancel", confirmWord:"Confirm",
   loading:"Loading…", noHoldings:"No open holdings.", noTrades:"No trades yet.", recentTrades:"Recent trades",
   layout:"Layout", layoutAuto:"Automatic", layoutMobile:"Mobile", layoutDesktop:"Desktop",
   adminShowGuests:"Show guests", adminHidden:"{n} guest accounts hidden",
   accountBlocked:"Your account has been blocked. Please contact the administrator.",
-  master:"Master", confirmPassword:"Confirm password", passwordMismatch:"The two passwords do not match.", adminTitle:"All players", adminHint:"Full access. Block, delete or reset any account.", adminSearch:"Search players…", adminActions:"Actions", adminView:"View", adminReset:"Reset password", adminBlock:"Block", adminUnblock:"Unblock", adminDelete:"Delete", adminNoMatch:"No players match that search.", adminDenied:"Administrator access is required.", adminAccounts:"Accounts", adminRegistered:"Registered", adminGuests:"Guests", adminBlocked:"Blocked", adminTrades:"Trades", adminStore:"Store", adminActive:"Active", adminStatus:"Status", adminSessions:"Active sessions", adminDisplayName:"Display name", adminResetPrompt:"Enter a new password for {name}:", adminResetDone:"Password reset for {name}.", adminBlockedDone:"{name} has been blocked.", adminUnblocked:"{name} has been unblocked.", adminDeleteConfirm:"Delete {name} permanently? Their portfolio and history are erased and the username becomes available again.", adminDeleted:"{name} deleted. The username is free again.", adminPwNote:"Stored as a one-way hash — it cannot be shown. Use Reset password.", guest:"Guest", guestNoLogin:"guest · no login", blocked:"Blocked", joined:"joined",
+  master:"Master", confirmPassword:"Confirm password", passwordMismatch:"The two passwords do not match.", adminTitle:"All players", adminHint:"Full access. Block, delete or reset any account.", adminSearch:"Search players…", adminActions:"Actions", adminView:"View", adminReset:"Reset password", adminBlock:"Block", adminUnblock:"Unblock", adminDelete:"Delete", adminNoMatch:"No players match that search.", adminDenied:"Administrator access is required.", adminAccounts:"Accounts", adminRegistered:"Registered", adminGuests:"Guests", adminBlocked:"Blocked", adminTrades:"Trades", adminStore:"Store", adminActive:"Active", adminStatus:"Status", adminSessions:"Active sessions", adminDisplayName:"Display name", adminResetPrompt:"Enter a new password for {name}:", adminResetDone:"Password reset for {name}.", adminBlockedDone:"{name} has been blocked.", adminUnblocked:"{name} has been unblocked.", adminDeleteConfirm:"Delete {name} permanently? Their portfolio and history are erased and the username becomes available again.", adminDeleted:"{name} deleted. The username is free again.", adminPwEnv:"Set by MASTER_PASSWORD in the server environment. Change it there and restart.", adminPwGuest:"Guest accounts have no password.", adminPwNote:"Stored as a one-way hash — it cannot be shown. Use Reset password.", guest:"Guest", guestNoLogin:"guest · no login", blocked:"Blocked", joined:"joined",
   lbLost:"Lost", leaderHintPnl:"Ranked by profit and loss", leaderHintValue:"Ranked by portfolio value", leaderHintLost:"Ranked by biggest losses — furthest below their starting balance first",
   leaderboard:"Leaderboard", leaderHint:"Ranked by total return", leaderEmpty:"No players yet — sign up to claim the top spot.", leaderGuest:"You are playing as a guest. Sign up to appear on the leaderboard.", leaderError:"Could not load the leaderboard.", rank:"Rank", player:"Player", value:"Value", started:"Started", pnl:"P&L", returnPct:"Return", trades:"Trades", you:"you", playerCount:"{n} players", signUp:"Sign up", logIn:"Log in", logOut:"Log out", createAccount:"Create account", username:"Username", password:"Password", signUpSub:"Create an account to save your progress and join the leaderboard.", signUpKeeps:"Your current portfolio comes with you — nothing is lost.", logInSub:"Welcome back. Log in to pick up where you left off.", haveAccount:"Already have an account?", noAccount:"Need an account?", welcomeNew:"Welcome, {name}! You are on the leaderboard.", welcomeBack:"Welcome back, {name}.", loggedOut:"Logged out. You are playing as a guest.", confirmLogout:"Log out of {name}?",
   tagline:"Practice cryptocurrency trading with live market data and AI-powered ratings — zero risk, real skills.",
@@ -1167,12 +1184,13 @@ en: {
   errGeneric:"Something went wrong. Please try again.",
 },
 hy: {
+  adminStore:"Հաշիվներ", adminStoreSaved:"Պահպանված", adminStoreTemp:"Չպահպանված", adminStoreSavedHint:"Հաշիվները, պորտֆելները և արդյունքները պահվում են տվյալների բազայում և պահպանվում վերագործարկումից հետո։", adminStoreTempHint:"Տվյալների բազա միացված չէ — բոլոր հաշիվները ջնջվում են սերվերի վերագործարկման ժամանակ։",
   cancel:"Չեղարկել", confirmWord:"Հաստատել",
   loading:"Բեռնվում է…", noHoldings:"Բաց դիրքեր չկան։", noTrades:"Դեռ գործարքներ չկան։", recentTrades:"Վերջին գործարքները",
   layout:"Դասավորություն", layoutAuto:"Ավտոմատ", layoutMobile:"Բջջային", layoutDesktop:"Համակարգչային",
   adminShowGuests:"Ցուցադրել հյուրերին", adminHidden:"{n} հյուր հաշիվ թաքցված է",
   accountBlocked:"Ձեր հաշիվն արգելափակված է։ Խնդրում ենք կապվել ադմինիստրատորի հետ։",
-  master:"Գլխավոր", confirmPassword:"Հաստատել գաղտնաբառը", passwordMismatch:"Գաղտնաբառերը չեն համընկնում։", adminTitle:"Բոլոր խաղացողները", adminHint:"Լիարժեք մուտք։ Արգելափակել, ջնջել կամ վերականգնել ցանկացած հաշիվ։", adminSearch:"Որոնել խաղացողներ…", adminActions:"Գործողություններ", adminView:"Դիտել", adminReset:"Վերականգնել գաղտնաբառը", adminBlock:"Արգելափակել", adminUnblock:"Ապաարգելափակել", adminDelete:"Ջնջել", adminNoMatch:"Համընկնող խաղացողներ չկան։", adminDenied:"Պահանջվում է ադմինիստրատորի մուտք։", adminAccounts:"Հաշիվներ", adminRegistered:"Գրանցված", adminGuests:"Հյուրեր", adminBlocked:"Արգելափակված", adminTrades:"Գործարքներ", adminStore:"Պահոց", adminActive:"Ակտիվ", adminStatus:"Կարգավիճակ", adminSessions:"Ակտիվ սեսիաներ", adminDisplayName:"Ցուցադրվող անուն", adminResetPrompt:"Մուտքագրեք նոր գաղտնաբառ {name}-ի համար՝", adminResetDone:"{name}-ի գաղտնաբառը վերականգնվեց։", adminBlockedDone:"{name}-ը արգելափակվեց։", adminUnblocked:"{name}-ը ապաարգելափակվեց։", adminDeleteConfirm:"Ջնջե՞լ {name}-ը ընդմիշտ։ Պորտֆելը և պատմությունը կջնջվեն, օգտանունը կազատվի։", adminDeleted:"{name}-ը ջնջվեց։ Օգտանունն ազատ է։", adminPwNote:"Պահվում է միակողմանի հեշով — հնարավոր չէ ցուցադրել։ Օգտագործեք վերականգնումը։", guest:"Հյուր", guestNoLogin:"հյուր · առանց մուտքի", blocked:"Արգելափակված", joined:"միացել է",
+  master:"Գլխավոր", confirmPassword:"Հաստատել գաղտնաբառը", passwordMismatch:"Գաղտնաբառերը չեն համընկնում։", adminTitle:"Բոլոր խաղացողները", adminHint:"Լիարժեք մուտք։ Արգելափակել, ջնջել կամ վերականգնել ցանկացած հաշիվ։", adminSearch:"Որոնել խաղացողներ…", adminActions:"Գործողություններ", adminView:"Դիտել", adminReset:"Վերականգնել գաղտնաբառը", adminBlock:"Արգելափակել", adminUnblock:"Ապաարգելափակել", adminDelete:"Ջնջել", adminNoMatch:"Համընկնող խաղացողներ չկան։", adminDenied:"Պահանջվում է ադմինիստրատորի մուտք։", adminAccounts:"Հաշիվներ", adminRegistered:"Գրանցված", adminGuests:"Հյուրեր", adminBlocked:"Արգելափակված", adminTrades:"Գործարքներ", adminStore:"Պահոց", adminActive:"Ակտիվ", adminStatus:"Կարգավիճակ", adminSessions:"Ակտիվ սեսիաներ", adminDisplayName:"Ցուցադրվող անուն", adminResetPrompt:"Մուտքագրեք նոր գաղտնաբառ {name}-ի համար՝", adminResetDone:"{name}-ի գաղտնաբառը վերականգնվեց։", adminBlockedDone:"{name}-ը արգելափակվեց։", adminUnblocked:"{name}-ը ապաարգելափակվեց։", adminDeleteConfirm:"Ջնջե՞լ {name}-ը ընդմիշտ։ Պորտֆելը և պատմությունը կջնջվեն, օգտանունը կազատվի։", adminDeleted:"{name}-ը ջնջվեց։ Օգտանունն ազատ է։", adminPwEnv:"Սահմանվում է սերվերի MASTER_PASSWORD-ով։ Փոխեք այնտեղ և վերագործարկեք։", adminPwGuest:"Հյուր հաշիվները գաղտնաբառ չունեն։", adminPwNote:"Պահվում է միակողմանի հեշով — հնարավոր չէ ցուցադրել։ Օգտագործեք վերականգնումը։", guest:"Հյուր", guestNoLogin:"հյուր · առանց մուտքի", blocked:"Արգելափակված", joined:"միացել է",
   lbLost:"Կորուստ", leaderHintPnl:"Դասավորված ըստ շահույթի և վնասի", leaderHintValue:"Դասավորված ըստ պորտֆելի արժեքի", leaderHintLost:"Դասավորված ըստ ամենամեծ կորուստների — մեկնարկային գումարից ամենահեռուն ընկածն առաջինը",
   leaderboard:"Առաջատարներ", leaderHint:"Դասավորված ըստ ընդհանուր եկամտի", leaderEmpty:"Դեռ խաղացողներ չկան — գրանցվեք և զբաղեցրեք առաջին տեղը։", leaderGuest:"Դուք խաղում եք որպես հյուր։ Գրանցվեք՝ ցուցակում հայտնվելու համար։", leaderError:"Չհաջողվեց բեռնել առաջատարների ցանկը։", rank:"Տեղ", player:"Խաղացող", value:"Արժեք", started:"Մեկնարկ", pnl:"Շ/Վ", returnPct:"Եկամուտ", trades:"Գործարքներ", you:"դուք", playerCount:"{n} խաղացող", signUp:"Գրանցվել", logIn:"Մուտք", logOut:"Ելք", createAccount:"Ստեղծել հաշիվ", username:"Օգտանուն", password:"Գաղտնաբառ", signUpSub:"Ստեղծեք հաշիվ՝ առաջընթացը պահպանելու և ցուցակին միանալու համար։", signUpKeeps:"Ձեր ընթացիկ պորտֆելը մնում է ձեզ հետ — ոչինչ չի կորչում։", logInSub:"Բարի վերադարձ։ Մուտք գործեք՝ շարունակելու համար։", haveAccount:"Արդեն ունե՞ք հաշիվ։", noAccount:"Հաշիվ պե՞տք է։", welcomeNew:"Բարի գալուստ, {name}: Դուք ցուցակում եք։", welcomeBack:"Բարի վերադարձ, {name}։", loggedOut:"Դուրս եկաք։ Խաղում եք որպես հյուր։", confirmLogout:"Դուրս գա՞լ {name} հաշվից։",
   tagline:"Փորձեք կրիպտոարժույթների առևտուրը իրական շուկայական տվյալներով և AI գնահատականներով — զրո ռիսկ, իրական հմտություններ։",
@@ -1233,12 +1251,13 @@ hy: {
   errGeneric:"Ինչ-որ բան սխալ գնաց։ Խնդրում ենք կրկին փորձել։",
 },
 uk: {
+  adminStore:"Акаунти", adminStoreSaved:"Збережено", adminStoreTemp:"Не збережено", adminStoreSavedHint:"Акаунти, портфелі та результати зберігаються в базі даних і переживають перезапуск.", adminStoreTempHint:"База даних не підключена — усі акаунти стираються при перезапуску сервера.",
   cancel:"Скасувати", confirmWord:"Підтвердити",
   loading:"Завантаження…", noHoldings:"Немає відкритих позицій.", noTrades:"Ще немає угод.", recentTrades:"Останні угоди",
   layout:"Макет", layoutAuto:"Автоматично", layoutMobile:"Мобільний", layoutDesktop:"Комп'ютерний",
   adminShowGuests:"Показати гостей", adminHidden:"{n} гостьових акаунтів приховано",
   accountBlocked:"Ваш акаунт заблоковано. Зверніться до адміністратора.",
-  master:"Майстер", confirmPassword:"Підтвердьте пароль", passwordMismatch:"Паролі не збігаються.", adminTitle:"Усі гравці", adminHint:"Повний доступ. Блокуйте, видаляйте або скидайте будь-який акаунт.", adminSearch:"Пошук гравців…", adminActions:"Дії", adminView:"Переглянути", adminReset:"Скинути пароль", adminBlock:"Заблокувати", adminUnblock:"Розблокувати", adminDelete:"Видалити", adminNoMatch:"Немає гравців за цим запитом.", adminDenied:"Потрібен доступ адміністратора.", adminAccounts:"Акаунти", adminRegistered:"Зареєстровані", adminGuests:"Гості", adminBlocked:"Заблоковані", adminTrades:"Угоди", adminStore:"Сховище", adminActive:"Активний", adminStatus:"Статус", adminSessions:"Активні сесії", adminDisplayName:"Відображуване ім'я", adminResetPrompt:"Введіть новий пароль для {name}:", adminResetDone:"Пароль для {name} скинуто.", adminBlockedDone:"{name} заблоковано.", adminUnblocked:"{name} розблоковано.", adminDeleteConfirm:"Видалити {name} назавжди? Портфель та історію буде стерто, а ім'я користувача звільниться.", adminDeleted:"{name} видалено. Ім'я користувача знову вільне.", adminPwNote:"Зберігається як односторонній хеш — показати неможливо. Скиньте пароль.", guest:"Гість", guestNoLogin:"гість · без входу", blocked:"Заблоковано", joined:"приєднався",
+  master:"Майстер", confirmPassword:"Підтвердьте пароль", passwordMismatch:"Паролі не збігаються.", adminTitle:"Усі гравці", adminHint:"Повний доступ. Блокуйте, видаляйте або скидайте будь-який акаунт.", adminSearch:"Пошук гравців…", adminActions:"Дії", adminView:"Переглянути", adminReset:"Скинути пароль", adminBlock:"Заблокувати", adminUnblock:"Розблокувати", adminDelete:"Видалити", adminNoMatch:"Немає гравців за цим запитом.", adminDenied:"Потрібен доступ адміністратора.", adminAccounts:"Акаунти", adminRegistered:"Зареєстровані", adminGuests:"Гості", adminBlocked:"Заблоковані", adminTrades:"Угоди", adminStore:"Сховище", adminActive:"Активний", adminStatus:"Статус", adminSessions:"Активні сесії", adminDisplayName:"Відображуване ім'я", adminResetPrompt:"Введіть новий пароль для {name}:", adminResetDone:"Пароль для {name} скинуто.", adminBlockedDone:"{name} заблоковано.", adminUnblocked:"{name} розблоковано.", adminDeleteConfirm:"Видалити {name} назавжди? Портфель та історію буде стерто, а ім'я користувача звільниться.", adminDeleted:"{name} видалено. Ім'я користувача знову вільне.", adminPwEnv:"Задається змінною MASTER_PASSWORD на сервері. Змініть її та перезапустіть.", adminPwGuest:"Гостьові акаунти не мають пароля.", adminPwNote:"Зберігається як односторонній хеш — показати неможливо. Скиньте пароль.", guest:"Гість", guestNoLogin:"гість · без входу", blocked:"Заблоковано", joined:"приєднався",
   lbLost:"Збитки", leaderHintPnl:"За прибутком і збитком", leaderHintValue:"За вартістю портфеля", leaderHintLost:"За найбільшими збитками — найдалі від стартового балансу першими",
   leaderboard:"Рейтинг", leaderHint:"За загальною дохідністю", leaderEmpty:"Гравців ще немає — зареєструйтеся й посядьте перше місце.", leaderGuest:"Ви граєте як гість. Зареєструйтеся, щоб потрапити до рейтингу.", leaderError:"Не вдалося завантажити рейтинг.", rank:"Місце", player:"Гравець", value:"Вартість", started:"Старт", pnl:"П/З", returnPct:"Дохідність", trades:"Угоди", you:"ви", playerCount:"{n} гравців", signUp:"Реєстрація", logIn:"Увійти", logOut:"Вийти", createAccount:"Створити акаунт", username:"Ім'я користувача", password:"Пароль", signUpSub:"Створіть акаунт, щоб зберегти прогрес і потрапити до рейтингу.", signUpKeeps:"Ваш поточний портфель залишається з вами — нічого не втрачено.", logInSub:"З поверненням. Увійдіть, щоб продовжити.", haveAccount:"Вже маєте акаунт?", noAccount:"Потрібен акаунт?", welcomeNew:"Вітаємо, {name}! Ви в рейтингу.", welcomeBack:"З поверненням, {name}.", loggedOut:"Ви вийшли. Граєте як гість.", confirmLogout:"Вийти з {name}?",
   tagline:"Практикуйте торгівлю криптовалютами на реальних ринкових даних з рейтингами на основі ШІ — без ризику, зі справжніми навичками.",
@@ -1299,12 +1318,13 @@ uk: {
   errGeneric:"Щось пішло не так. Спробуйте ще раз.",
 },
 es: {
+  adminStore:"Cuentas", adminStoreSaved:"Guardadas", adminStoreTemp:"Sin guardar", adminStoreSavedHint:"Las cuentas, carteras y clasificaciones se guardan en una base de datos y sobreviven a los reinicios.", adminStoreTempHint:"No hay base de datos conectada: todas las cuentas se borran al reiniciar el servidor.",
   cancel:"Cancelar", confirmWord:"Confirmar",
   loading:"Cargando…", noHoldings:"Sin posiciones abiertas.", noTrades:"Aún no hay operaciones.", recentTrades:"Operaciones recientes",
   layout:"Diseño", layoutAuto:"Automático", layoutMobile:"Móvil", layoutDesktop:"Escritorio",
   adminShowGuests:"Mostrar invitados", adminHidden:"{n} cuentas de invitado ocultas",
   accountBlocked:"Tu cuenta ha sido bloqueada. Contacta con el administrador.",
-  master:"Maestro", confirmPassword:"Confirmar contraseña", passwordMismatch:"Las contraseñas no coinciden.", adminTitle:"Todos los jugadores", adminHint:"Acceso total. Bloquea, elimina o restablece cualquier cuenta.", adminSearch:"Buscar jugadores…", adminActions:"Acciones", adminView:"Ver", adminReset:"Restablecer contraseña", adminBlock:"Bloquear", adminUnblock:"Desbloquear", adminDelete:"Eliminar", adminNoMatch:"Ningún jugador coincide.", adminDenied:"Se requiere acceso de administrador.", adminAccounts:"Cuentas", adminRegistered:"Registrados", adminGuests:"Invitados", adminBlocked:"Bloqueados", adminTrades:"Operaciones", adminStore:"Almacén", adminActive:"Activo", adminStatus:"Estado", adminSessions:"Sesiones activas", adminDisplayName:"Nombre visible", adminResetPrompt:"Introduce una nueva contraseña para {name}:", adminResetDone:"Contraseña restablecida para {name}.", adminBlockedDone:"{name} ha sido bloqueado.", adminUnblocked:"{name} ha sido desbloqueado.", adminDeleteConfirm:"¿Eliminar {name} permanentemente? Su cartera e historial se borran y el nombre de usuario queda libre.", adminDeleted:"{name} eliminado. El nombre de usuario está libre.", adminPwNote:"Se guarda como hash unidireccional: no se puede mostrar. Usa Restablecer contraseña.", guest:"Invitado", guestNoLogin:"invitado · sin acceso", blocked:"Bloqueado", joined:"se unió",
+  master:"Maestro", confirmPassword:"Confirmar contraseña", passwordMismatch:"Las contraseñas no coinciden.", adminTitle:"Todos los jugadores", adminHint:"Acceso total. Bloquea, elimina o restablece cualquier cuenta.", adminSearch:"Buscar jugadores…", adminActions:"Acciones", adminView:"Ver", adminReset:"Restablecer contraseña", adminBlock:"Bloquear", adminUnblock:"Desbloquear", adminDelete:"Eliminar", adminNoMatch:"Ningún jugador coincide.", adminDenied:"Se requiere acceso de administrador.", adminAccounts:"Cuentas", adminRegistered:"Registrados", adminGuests:"Invitados", adminBlocked:"Bloqueados", adminTrades:"Operaciones", adminStore:"Almacén", adminActive:"Activo", adminStatus:"Estado", adminSessions:"Sesiones activas", adminDisplayName:"Nombre visible", adminResetPrompt:"Introduce una nueva contraseña para {name}:", adminResetDone:"Contraseña restablecida para {name}.", adminBlockedDone:"{name} ha sido bloqueado.", adminUnblocked:"{name} ha sido desbloqueado.", adminDeleteConfirm:"¿Eliminar {name} permanentemente? Su cartera e historial se borran y el nombre de usuario queda libre.", adminDeleted:"{name} eliminado. El nombre de usuario está libre.", adminPwEnv:"Se define con MASTER_PASSWORD en el servidor. Cámbiala allí y reinicia.", adminPwGuest:"Las cuentas de invitado no tienen contraseña.", adminPwNote:"Se guarda como hash unidireccional: no se puede mostrar. Usa Restablecer contraseña.", guest:"Invitado", guestNoLogin:"invitado · sin acceso", blocked:"Bloqueado", joined:"se unió",
   lbLost:"Pérdidas", leaderHintPnl:"Ordenado por ganancias y pérdidas", leaderHintValue:"Ordenado por valor de la cartera", leaderHintLost:"Ordenado por mayores pérdidas: primero quien está más por debajo de su saldo inicial",
   leaderboard:"Clasificación", leaderHint:"Ordenado por rendimiento total", leaderEmpty:"Aún no hay jugadores: regístrate y ocupa el primer puesto.", leaderGuest:"Estás jugando como invitado. Regístrate para aparecer en la clasificación.", leaderError:"No se pudo cargar la clasificación.", rank:"Puesto", player:"Jugador", value:"Valor", started:"Inicial", pnl:"P&G", returnPct:"Rendimiento", trades:"Operaciones", you:"tú", playerCount:"{n} jugadores", signUp:"Registrarse", logIn:"Iniciar sesión", logOut:"Cerrar sesión", createAccount:"Crear cuenta", username:"Usuario", password:"Contraseña", signUpSub:"Crea una cuenta para guardar tu progreso y entrar en la clasificación.", signUpKeeps:"Tu cartera actual te acompaña: no se pierde nada.", logInSub:"Bienvenido de nuevo. Inicia sesión para continuar.", haveAccount:"¿Ya tienes cuenta?", noAccount:"¿Necesitas una cuenta?", welcomeNew:"¡Bienvenido, {name}! Ya estás en la clasificación.", welcomeBack:"Bienvenido de nuevo, {name}.", loggedOut:"Sesión cerrada. Juegas como invitado.", confirmLogout:"¿Cerrar la sesión de {name}?",
   tagline:"Practica el trading de criptomonedas con datos de mercado en vivo y calificaciones impulsadas por IA — cero riesgo, habilidades reales.",
@@ -1365,12 +1385,13 @@ es: {
   errGeneric:"Algo salió mal. Inténtalo de nuevo.",
 },
 el: {
+  adminStore:"Λογαριασμοί", adminStoreSaved:"Αποθηκευμένοι", adminStoreTemp:"Μη αποθηκευμένοι", adminStoreSavedHint:"Οι λογαριασμοί, τα χαρτοφυλάκια και οι κατατάξεις αποθηκεύονται σε βάση δεδομένων και επιβιώνουν των επανεκκινήσεων.", adminStoreTempHint:"Δεν υπάρχει συνδεδεμένη βάση δεδομένων — κάθε λογαριασμός διαγράφεται σε επανεκκίνηση.",
   cancel:"Άκυρο", confirmWord:"Επιβεβαίωση",
   loading:"Φόρτωση…", noHoldings:"Καμία ανοιχτή θέση.", noTrades:"Καμία συναλλαγή ακόμη.", recentTrades:"Πρόσφατες συναλλαγές",
   layout:"Διάταξη", layoutAuto:"Αυτόματη", layoutMobile:"Κινητό", layoutDesktop:"Υπολογιστή",
   adminShowGuests:"Εμφάνιση επισκεπτών", adminHidden:"{n} λογαριασμοί επισκεπτών κρυμμένοι",
   accountBlocked:"Ο λογαριασμός σας έχει αποκλειστεί. Επικοινωνήστε με τον διαχειριστή.",
-  master:"Κύριος", confirmPassword:"Επιβεβαίωση κωδικού", passwordMismatch:"Οι κωδικοί δεν ταιριάζουν.", adminTitle:"Όλοι οι παίκτες", adminHint:"Πλήρης πρόσβαση. Αποκλείστε, διαγράψτε ή επαναφέρετε οποιονδήποτε λογαριασμό.", adminSearch:"Αναζήτηση παικτών…", adminActions:"Ενέργειες", adminView:"Προβολή", adminReset:"Επαναφορά κωδικού", adminBlock:"Αποκλεισμός", adminUnblock:"Άρση αποκλεισμού", adminDelete:"Διαγραφή", adminNoMatch:"Κανένας παίκτης δεν ταιριάζει.", adminDenied:"Απαιτείται πρόσβαση διαχειριστή.", adminAccounts:"Λογαριασμοί", adminRegistered:"Εγγεγραμμένοι", adminGuests:"Επισκέπτες", adminBlocked:"Αποκλεισμένοι", adminTrades:"Συναλλαγές", adminStore:"Αποθήκη", adminActive:"Ενεργός", adminStatus:"Κατάσταση", adminSessions:"Ενεργές συνεδρίες", adminDisplayName:"Εμφανιζόμενο όνομα", adminResetPrompt:"Εισαγάγετε νέο κωδικό για τον/την {name}:", adminResetDone:"Ο κωδικός για {name} επαναφέρθηκε.", adminBlockedDone:"Ο/Η {name} αποκλείστηκε.", adminUnblocked:"Ο/Η {name} ξεμπλοκαρίστηκε.", adminDeleteConfirm:"Οριστική διαγραφή του/της {name}; Το χαρτοφυλάκιο και το ιστορικό διαγράφονται και το όνομα χρήστη ελευθερώνεται.", adminDeleted:"Ο/Η {name} διαγράφηκε. Το όνομα χρήστη είναι ξανά διαθέσιμο.", adminPwNote:"Αποθηκεύεται ως μονόδρομο hash — δεν μπορεί να εμφανιστεί. Χρησιμοποιήστε Επαναφορά κωδικού.", guest:"Επισκέπτης", guestNoLogin:"επισκέπτης · χωρίς σύνδεση", blocked:"Αποκλεισμένος", joined:"εγγράφηκε",
+  master:"Κύριος", confirmPassword:"Επιβεβαίωση κωδικού", passwordMismatch:"Οι κωδικοί δεν ταιριάζουν.", adminTitle:"Όλοι οι παίκτες", adminHint:"Πλήρης πρόσβαση. Αποκλείστε, διαγράψτε ή επαναφέρετε οποιονδήποτε λογαριασμό.", adminSearch:"Αναζήτηση παικτών…", adminActions:"Ενέργειες", adminView:"Προβολή", adminReset:"Επαναφορά κωδικού", adminBlock:"Αποκλεισμός", adminUnblock:"Άρση αποκλεισμού", adminDelete:"Διαγραφή", adminNoMatch:"Κανένας παίκτης δεν ταιριάζει.", adminDenied:"Απαιτείται πρόσβαση διαχειριστή.", adminAccounts:"Λογαριασμοί", adminRegistered:"Εγγεγραμμένοι", adminGuests:"Επισκέπτες", adminBlocked:"Αποκλεισμένοι", adminTrades:"Συναλλαγές", adminStore:"Αποθήκη", adminActive:"Ενεργός", adminStatus:"Κατάσταση", adminSessions:"Ενεργές συνεδρίες", adminDisplayName:"Εμφανιζόμενο όνομα", adminResetPrompt:"Εισαγάγετε νέο κωδικό για τον/την {name}:", adminResetDone:"Ο κωδικός για {name} επαναφέρθηκε.", adminBlockedDone:"Ο/Η {name} αποκλείστηκε.", adminUnblocked:"Ο/Η {name} ξεμπλοκαρίστηκε.", adminDeleteConfirm:"Οριστική διαγραφή του/της {name}; Το χαρτοφυλάκιο και το ιστορικό διαγράφονται και το όνομα χρήστη ελευθερώνεται.", adminDeleted:"Ο/Η {name} διαγράφηκε. Το όνομα χρήστη είναι ξανά διαθέσιμο.", adminPwEnv:"Ορίζεται από το MASTER_PASSWORD στον διακομιστή. Αλλάξτε το εκεί και επανεκκινήστε.", adminPwGuest:"Οι λογαριασμοί επισκέπτη δεν έχουν κωδικό.", adminPwNote:"Αποθηκεύεται ως μονόδρομο hash — δεν μπορεί να εμφανιστεί. Χρησιμοποιήστε Επαναφορά κωδικού.", guest:"Επισκέπτης", guestNoLogin:"επισκέπτης · χωρίς σύνδεση", blocked:"Αποκλεισμένος", joined:"εγγράφηκε",
   lbLost:"Ζημίες", leaderHintPnl:"Ταξινόμηση κατά κέρδη και ζημίες", leaderHintValue:"Ταξινόμηση κατά αξία χαρτοφυλακίου", leaderHintLost:"Ταξινόμηση κατά μεγαλύτερες ζημίες — πρώτα όσοι απέχουν περισσότερο από το αρχικό τους υπόλοιπο",
   leaderboard:"Κατάταξη", leaderHint:"Ταξινόμηση κατά συνολική απόδοση", leaderEmpty:"Δεν υπάρχουν παίκτες ακόμη — εγγραφείτε και πάρτε την πρώτη θέση.", leaderGuest:"Παίζετε ως επισκέπτης. Εγγραφείτε για να εμφανιστείτε στην κατάταξη.", leaderError:"Δεν ήταν δυνατή η φόρτωση της κατάταξης.", rank:"Θέση", player:"Παίκτης", value:"Αξία", started:"Εκκίνηση", pnl:"Κ/Ζ", returnPct:"Απόδοση", trades:"Συναλλαγές", you:"εσείς", playerCount:"{n} παίκτες", signUp:"Εγγραφή", logIn:"Σύνδεση", logOut:"Αποσύνδεση", createAccount:"Δημιουργία λογαριασμού", username:"Όνομα χρήστη", password:"Κωδικός", signUpSub:"Δημιουργήστε λογαριασμό για να αποθηκεύσετε την πρόοδό σας και να μπείτε στην κατάταξη.", signUpKeeps:"Το τρέχον χαρτοφυλάκιό σας σας ακολουθεί — τίποτα δεν χάνεται.", logInSub:"Καλώς ορίσατε ξανά. Συνδεθείτε για να συνεχίσετε.", haveAccount:"Έχετε ήδη λογαριασμό;", noAccount:"Χρειάζεστε λογαριασμό;", welcomeNew:"Καλώς ήρθατε, {name}! Είστε στην κατάταξη.", welcomeBack:"Καλώς ήρθατε ξανά, {name}.", loggedOut:"Αποσυνδεθήκατε. Παίζετε ως επισκέπτης.", confirmLogout:"Αποσύνδεση από {name};",
   tagline:"Εξασκηθείτε στις συναλλαγές κρυπτονομισμάτων με ζωντανά δεδομένα αγοράς και αξιολογήσεις ΤΝ — μηδενικό ρίσκο, πραγματικές δεξιότητες.",
@@ -1443,6 +1464,11 @@ function t(key, vars) {
 function applyStatic() {
   document.querySelectorAll('[data-i18n]').forEach(n => { n.textContent = t(n.dataset.i18n); });
   document.querySelectorAll('[data-i18n-ph]').forEach(n => { n.placeholder = t(n.dataset.i18nPh); });
+  // The layout button's label is built in JS rather than carried on a
+  // data-i18n attribute, so it has to be refreshed here or it keeps whatever
+  // language was current when it was last drawn. Boot sets it before the saved
+  // language is resolved, which makes this the thing that corrects it.
+  if (typeof setLayoutIcon === 'function') setLayoutIcon(savedLayout());
 }
 
 /* ══ State & helpers ════════════════════════════════════════════════════ */
@@ -2492,11 +2518,17 @@ const Admin = {
       ['adminBlocked', s.blocked],
       ['adminTrades', s.total_trades],
     ];
+    // Say what the storage *means*, not which engine it is. "postgres" is an
+    // implementation detail; whether accounts survive a restart is the fact
+    // the operator actually needs, and getting it wrong loses every account.
+    const durable = s.store_backend === 'postgres';
     $('#adminStats').innerHTML = tiles.map(([k, v]) =>
       `<div class="tile"><div class="label">${esc(t(k))}</div>
         <div class="value num">${v}</div></div>`).join('') +
-      `<div class="tile"><div class="label">${esc(t('adminStore'))}</div>
-        <div class="value num" style="font-size:15px">${esc(s.store_backend)}</div></div>`;
+      `<div class="tile" title="${esc(t(durable ? 'adminStoreSavedHint' : 'adminStoreTempHint'))}">
+        <div class="label">${esc(t('adminStore'))}</div>
+        <div class="value ${durable ? 'pos' : 'neg'}" style="font-size:14px">
+          ${esc(t(durable ? 'adminStoreSaved' : 'adminStoreTemp'))}</div></div>`;
   },
 
   render() {
@@ -2543,6 +2575,14 @@ const Admin = {
       // no login to block and are purged on a TTL, so neither action means
       // anything against one.
       const locked = p.is_admin || p.is_guest;
+      // Reset is locked for the admin for a different reason than block and
+      // delete: its password is not stored here to begin with. ensure_master()
+      // re-applies MASTER_PASSWORD on every boot, so a reset would hold until
+      // the next restart and then revert silently -- the admin would think they
+      // had rotated a credential that had already changed back. The env var is
+      // the only place that password actually lives.
+      const pwLocked = p.is_admin || p.is_guest;
+      const pwWhy = p.is_admin ? t('adminPwEnv') : p.is_guest ? t('adminPwGuest') : '';
       return `<div class="ad-row${p.is_blocked ? ' blocked' : ''}${p.id === this.me ? ' self' : ''}">
         <div class="ad-who">
           <div class="ad-name">${esc(p.name)}${tags}</div>
@@ -2555,7 +2595,7 @@ const Admin = {
         <div class="ad-num">${p.trades}</div>
         <div class="ad-acts">
           <button class="ad-btn" data-act="view" data-id="${p.id}">${esc(t('adminView'))}</button>
-          <button class="ad-btn" data-act="pw" data-id="${p.id}" ${p.is_guest ? 'disabled' : ''}>${esc(t('adminReset'))}</button>
+          <button class="ad-btn" data-act="pw" data-id="${p.id}" ${pwLocked ? 'disabled' : ''}${pwWhy ? ` title="${esc(pwWhy)}"` : ''}>${esc(t('adminReset'))}</button>
           <span class="ad-pair">
             <button class="ad-btn" data-act="block" data-id="${p.id}" ${locked ? 'disabled' : ''}>${esc(t(p.is_blocked ? 'adminUnblock' : 'adminBlock'))}</button>
             <button class="ad-btn danger" data-act="del" data-id="${p.id}" ${locked ? 'disabled' : ''}>${esc(t('adminDelete'))}</button>
@@ -2870,7 +2910,18 @@ function toggleTheme() {
    for almost everyone, so the override stays something you opt into rather
    than a side you get parked on by whichever way the default falls. */
 const LAYOUTS = ['auto', 'mobile', 'desktop'];
-const LAYOUT_ICON = { auto:'◫', mobile:'▯', desktop:'▭' };
+
+/* Drawn rather than lettered or emoji: these inherit currentColor so they
+   follow the theme, and stay one weight with the rest of the chrome. The A is
+   stroked like the other two for the same reason -- a text glyph next to two
+   line icons reads as a different size however it is tuned. */
+const SVG = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const LAYOUT_ICON = {
+  mobile:  SVG('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>'),
+  desktop: SVG('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/>'),
+  auto:    SVG('<path d="M5 20 12 4l7 16"/><path d="M8.5 14h7"/>'),
+};
 
 function savedLayout() {
   try {
@@ -2879,7 +2930,17 @@ function savedLayout() {
   } catch { return 'auto'; }
 }
 
-function applyLayout(mode, redraw) {
+function setLayoutIcon(mode) {
+  const btn = $('#landLayout');
+  if (!btn) return;
+  btn.innerHTML = LAYOUT_ICON[mode];
+  btn.title = `${t('layout')}: ${t('layout' + mode[0].toUpperCase() + mode.slice(1))}`;
+  // The icon carries no text, so the title alone would leave it unnamed to a
+  // screen reader.
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function applyLayout(mode, opts = {}) {
   document.documentElement.classList.toggle('force-mobile', mode === 'mobile');
 
   // Desktop-on-a-phone is not reachable from CSS: the media queries key off
@@ -2891,11 +2952,12 @@ function applyLayout(mode, redraw) {
   $('meta[name=viewport]').setAttribute('content',
     mode === 'desktop' ? 'width=1100' : 'width=device-width, initial-scale=1');
 
-  const btn = $('#layoutBtn');
-  btn.textContent = LAYOUT_ICON[mode];
-  btn.title = `${t('layout')}: ${t('layout' + mode[0].toUpperCase() + mode.slice(1))}`;
+  // Swapped at the halfway point of the spin so the icon appears to turn into
+  // the next one. Immediate on boot, where there is no press to acknowledge.
+  if (opts.spin) setTimeout(() => setLayoutIcon(mode), 210);
+  else setLayoutIcon(mode);
 
-  if (!redraw) return;
+  if (!opts.redraw) return;
   // Charts measure svg.clientWidth as they draw, so they hold their old
   // geometry until something redraws them -- and the measurement is only
   // correct once the new layout has been applied, hence rAF rather than a
@@ -2912,9 +2974,23 @@ function applyLayout(mode, redraw) {
 function cycleLayout() {
   const next = LAYOUTS[(LAYOUTS.indexOf(savedLayout()) + 1) % LAYOUTS.length];
   try { localStorage.setItem('layout', next); } catch {}
-  applyLayout(next, true);
+  applyLayout(next, { redraw:true, spin:true });
 }
-$('#layoutBtn').addEventListener('click', cycleLayout);
+$('#landLayout').addEventListener('click', cycleLayout);
+
+/* Press feedback for every icon circle. Delegated from the document so the
+   ones rendered later -- the drawer close, the master console -- are covered
+   without each render having to remember to wire it up. */
+document.addEventListener('click', e => {
+  const b = e.target.closest('.btn.icon');
+  if (!b) return;
+  b.classList.remove('spin');
+  void b.offsetWidth;   // forces a reflow, or a repeat press does not restart it
+  b.classList.add('spin');
+});
+document.addEventListener('animationend', e => {
+  if (e.animationName === 'iconSpin') e.target.classList.remove('spin');
+});
 
 $('#themeBtn').addEventListener('click', toggleTheme);
 $('#landTheme').addEventListener('click', toggleTheme);
@@ -2978,10 +3054,10 @@ try {
 } catch {}
 
 /* The head script already put the class and the viewport in place before first
-   paint; this only brings the button's own icon and tooltip into line with it.
-   Passing redraw=false matters -- nothing has rendered yet, so a redraw here
-   would measure charts that do not exist. */
-applyLayout(savedLayout(), false);
+   paint; this only brings the button's own icon and label into line with it.
+   No redraw: nothing has rendered yet, so it would measure charts that do not
+   exist. */
+applyLayout(savedLayout());
 
 (async function boot() {
   try { S.settings = await api('/api/settings'); }
