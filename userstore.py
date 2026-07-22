@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import secrets
 import sqlite3
 import threading
@@ -53,6 +54,21 @@ class _Dialect:
     @property
     def big_int(self) -> str:
         return "BIGINT"
+
+    @property
+    def for_update(self) -> str:
+        """Row-lock clause for a read whose value is about to be written back.
+
+        Postgres is MVCC, so a plain SELECT inside a transaction takes no lock
+        and two concurrent trades would each read the same balance and each
+        write back its own absolute result -- one payment vanishes. FOR UPDATE
+        holds the row until the transaction ends, so the second trade blocks
+        until the first commits and then reads the updated figure.
+
+        Empty on SQLite, which has no row-level locking. There the equivalent
+        guarantee comes from tx() opening with BEGIN IMMEDIATE.
+        """
+        return " FOR UPDATE" if self.postgres else ""
 
     def convert(self, sql: str) -> str:
         """SQLite uses ?, psycopg uses %s. Statements are written with ?.
@@ -163,45 +179,115 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_ts);
 
 # --- Connection ------------------------------------------------------------
 
-_conn: Any = None
-
-# Re-entrant, and it guards statement execution as well as connect().
+# A bounded pool of connections, one borrowed per statement or transaction.
 #
-# There is one process-wide connection, and commit/rollback act on the whole
-# connection rather than on a cursor: two threads interleaving inside tx()
-# would let one thread's rollback discard another's uncommitted statements.
-# That was harmless while every route was `async def` on a single event loop --
-# nothing interleaved -- but the DB-touching routes are plain `def` now and
-# FastAPI runs those in a threadpool, so the overlap is real.
+# This replaced a single process-wide connection guarded by one RLock. Commit
+# and rollback act on a *connection*, so with only one of them two threads
+# inside tx() would let one thread's rollback discard the other's uncommitted
+# statements -- and the lock prevented that by serialising every statement in
+# the process. Correct, but it meant no two requests ever touched the database
+# at the same time: measured at 0.26x, i.e. eight threads reading in parallel
+# took nearly four times as long as doing the same reads one after another,
+# purely in lock contention.
 #
-# Re-entrant because the read-then-write helpers (portfolio.buy, admin.delete)
-# query before opening their transaction, and tx() itself calls connect().
-_lock = threading.RLock()
+# Giving each in-flight operation its own connection makes the interleaving
+# structurally impossible instead of merely prevented, so the lock is gone.
+# tests/test_concurrency.py pins both properties directly.
+#
+# Bounded, not per-thread: FastAPI runs the `def` routes in a ~40-thread pool,
+# and 40 connections against free-plan Postgres would trade a throughput
+# problem for a connection-limit one. Borrowers queue when all are busy, which
+# is backpressure rather than a stall.
+_POOL_SIZE = max(1, int(os.getenv("USERSTORE_POOL_SIZE", "8")))
+_pool: queue.Queue | None = None
+_pool_lock = threading.Lock()
 
 
-def connect() -> Any:
-    global _conn
-    if _conn is not None:
-        return _conn
+def _new_connection() -> Any:
+    if IS_POSTGRES:
+        import psycopg
+        # autocommit off; tx() owns commit/rollback.
+        return psycopg.connect(DATABASE_URL, autocommit=False)
 
-    with _lock:
-        if _conn is not None:
-            return _conn
-        if IS_POSTGRES:
-            import psycopg
-            # autocommit off; tx() owns commit/rollback.
-            _conn = psycopg.connect(DATABASE_URL, autocommit=False)
-            log.info("userstore: postgres")
-        else:
-            path = config.BASE_DIR / "data" / "users.db"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            _conn = sqlite3.connect(path, check_same_thread=False)
-            _conn.row_factory = sqlite3.Row
-            _conn.execute("PRAGMA journal_mode=WAL")
-            log.info("userstore: sqlite (%s) -- set DATABASE_URL for durable storage", path)
+    path = config.BASE_DIR / "data" / "users.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # check_same_thread=False because a pooled connection is borrowed by
+    # whichever thread needs it next, not pinned to its creator. Only one
+    # borrower holds it at a time, which is the condition that flag guards.
+    # isolation_level=None hands transaction control to tx(), which needs to
+    # open with BEGIN IMMEDIATE. Left at the default the driver begins a
+    # deferred transaction implicitly on first write, and a deferred
+    # transaction takes its write lock too late -- after the read it is meant
+    # to protect. Reads outside tx() then autocommit, which is what we want.
+    conn = sqlite3.connect(path, check_same_thread=False, timeout=30.0,
+                           isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    # WAL lets readers run concurrently with a writer, but writers still
+    # serialise at the file level. Without a busy timeout the loser of that
+    # race raises "database is locked" instead of waiting its turn.
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
 
-        _init_schema(_conn)
-    return _conn
+
+def _ensure_pool() -> queue.Queue:
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+        first = _new_connection()
+        _init_schema(first)
+        q: queue.Queue = queue.Queue()
+        q.put(first)
+        # The rest are opened on first use rather than upfront: a deployment
+        # that never sees concurrent traffic should not hold eight idle
+        # Postgres connections open for the life of the process.
+        for _ in range(_POOL_SIZE - 1):
+            q.put(None)
+        _pool = q
+        log.info("userstore: %s (pool size %d)%s", backend(), _POOL_SIZE,
+                 "" if IS_POSTGRES else
+                 " -- set DATABASE_URL for durable storage")
+    return _pool
+
+
+@contextmanager
+def _borrow() -> Iterator[Any]:
+    """Take a connection for the duration of one statement or transaction."""
+    pool = _ensure_pool()
+    conn = pool.get()
+    try:
+        if conn is None:
+            conn = _new_connection()
+        yield conn
+    except BaseException:
+        # Never return a connection mid-transaction: the next borrower would
+        # inherit its open state and could commit work it never issued. If it
+        # cannot even be rolled back it is unusable -- drop it, and let the
+        # empty slot be refilled on the next borrow.
+        try:
+            if conn is not None:
+                conn.rollback()
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+        raise
+    finally:
+        pool.put(conn)
+
+
+def connect() -> None:
+    """Initialise the store. Safe to call repeatedly and from any thread.
+
+    Returns nothing: handing a connection out past the pool would let it be
+    used by a caller that never borrowed it.
+    """
+    _ensure_pool()
 
 
 def _split_statements(sql: str) -> list[str]:
@@ -270,14 +356,35 @@ def backend() -> str:
 
 @contextmanager
 def tx() -> Iterator[Any]:
-    conn = connect()
-    with _lock:
+    """A write transaction. Every caller of this writes; none is read-only.
+
+    On SQLite it opens with BEGIN IMMEDIATE, taking the database write lock
+    before the first statement rather than on the first write. That is what
+    makes a read-then-write inside the block safe: with a deferred
+    transaction, two trades both read the opening balance, both compute a
+    closing one, and the second overwrites the first. Postgres gets the same
+    guarantee per row from DIALECT.for_update instead, which is finer grained
+    -- trades by different users still run concurrently there.
+    """
+    with _borrow() as conn:
         cur = conn.cursor()
+        explicit = not IS_POSTGRES
         try:
+            if explicit:
+                cur.execute("BEGIN IMMEDIATE")
             yield cur
-            conn.commit()
+            if explicit:
+                cur.execute("COMMIT")
+            else:
+                conn.commit()
         except Exception:
-            conn.rollback()
+            if explicit:
+                try:
+                    cur.execute("ROLLBACK")
+                except Exception:
+                    pass
+            else:
+                conn.rollback()
             raise
         finally:
             cur.close()
@@ -291,14 +398,21 @@ def _rows_to_dicts(cur: Any) -> list[dict[str, Any]]:
 
 
 def query(sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-    conn = connect()
-    with _lock:
+    with _borrow() as conn:
         cur = conn.cursor()
         try:
             cur.execute(DIALECT.convert(sql), params)
             return _rows_to_dicts(cur)
         finally:
             cur.close()
+            # psycopg runs with autocommit off, so even a SELECT opens a
+            # transaction that holds its snapshot until it is closed. Left
+            # alone, every pooled connection would sit "idle in transaction"
+            # between reads, pinning vacuum and holding locks.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 
 def query_one(sql: str, params: tuple = ()) -> dict[str, Any] | None:

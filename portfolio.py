@@ -89,9 +89,21 @@ def trades(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
 
 
 def _cash_in(cur: Any, user_id: int) -> float:
-    """Cash balance read through an open transaction."""
+    """Cash balance read through an open transaction, with the row locked.
+
+    The lock is the point, not the read. This row is the serialisation point
+    for one user's trades: every buy and sell reads it before writing an
+    absolute balance back, so without holding it two concurrent trades both
+    observe the opening figure and the second silently overwrites the first.
+    Measured at 24 concurrent $10 buys removing $10 instead of $240.
+
+    Call this *first* in any transaction that touches a user's money, before
+    reading anything else that will be written back -- holdings included. It
+    is what orders the whole transaction against other trades by that user.
+    """
     cur.execute(userstore.DIALECT.convert(
-        "SELECT cash FROM portfolios WHERE user_id = ?"), (user_id,))
+        "SELECT cash FROM portfolios WHERE user_id = ?"
+        + userstore.DIALECT.for_update), (user_id,))
     row = cur.fetchone()
     return float(row[0]) if row else 0.0
 
@@ -182,6 +194,12 @@ def sell(user_id: int, symbol: str, price: float, ts: int, *,
 
     with userstore.tx() as cur:
         c = userstore.DIALECT.convert
+        # Take the portfolio row lock before reading the holding, not after.
+        # The quantity below is written back as an absolute, so it needs the
+        # same ordering the cash does -- and acquiring the lock only at the
+        # point cash is used would leave the holding read unprotected.
+        available = _cash_in(cur, user_id)
+
         existing = _holding_in(cur, user_id, symbol)
         if not existing:
             raise TradeError(f"You do not hold any {symbol}.")
@@ -210,7 +228,7 @@ def sell(user_id: int, symbol: str, price: float, ts: int, *,
         pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
 
         remaining = held_qty - qty
-        new_cash = _cash_in(cur, user_id) + proceeds
+        new_cash = available + proceeds
 
         if remaining <= 1e-12:
             cur.execute(c("DELETE FROM holdings WHERE user_id = ? AND symbol = ?"),
