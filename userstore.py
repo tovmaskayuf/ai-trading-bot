@@ -141,6 +141,23 @@ CREATE TABLE IF NOT EXISTS user_equity (
     fees         DOUBLE PRECISION,
     PRIMARY KEY (user_id, ts)
 );
+-- The primary key leads on user_id, so it cannot serve prune_equity()'s
+-- `WHERE ts < ?` and that delete degraded into a full scan of the largest
+-- table in the project. Measured on 1.08M rows: 19.55ms scanning vs 0.86ms
+-- through this index, and the scan grows with the table while the seek does
+-- not. It matters beyond the prune itself -- every statement here runs under
+-- one process-wide lock, so those milliseconds block every concurrent request,
+-- not just the maintenance pass.
+--
+-- Note this index is a *loss* on a bulk delete that removes a large fraction
+-- of the table (77ms scanning vs 168ms indexed when trimming a third of it).
+-- The hourly steady-state prune removes one cycle's worth past the retention
+-- boundary, which is the case that was optimised for.
+CREATE INDEX IF NOT EXISTS idx_user_equity_ts ON user_equity(ts);
+
+-- Same shape of problem: the primary key is `token`, so purge_expired_sessions
+-- scanned the table to find rows past expiry.
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_ts);
 """
 
 
