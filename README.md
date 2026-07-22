@@ -12,7 +12,10 @@ virtual portfolio against real prices — zero risk, real skills.
   P&L tracking, and full trade history
 - **Interactive charts everywhere** — portfolio value, every stat, every asset —
   each switchable between 1H / 24H / 1W / 1M / 1Y / All
-- **Four languages** — English, Հայերեն, Русский, Español
+- **A portfolio per visitor**, with optional accounts — play as a guest
+  immediately, and sign up later without losing what you built
+- **Global leaderboard** ranking every registered player by total return
+- **Five languages** — English, Հայերեն, Українська, Español, Ελληνικά
 - Light and dark themes, single self-contained web UI, no build step
 
 ## Quick start
@@ -73,16 +76,39 @@ If you put the variable in a Render **Environment Group**, creating the group
 is not enough — the group has to be linked to the service (service →
 Environment → *Link Environment Group*) or its variables never reach the app.
 
+### Accounts need a database
+
+`render.yaml` also provisions a free Postgres (`tt-trading-db`) and injects
+`DATABASE_URL`. Without it the app still runs, but the account store falls back
+to SQLite on the instance's ephemeral disk, so **every account, portfolio and
+leaderboard standing is wiped on restart** — including the 15-minute idle
+spin-down. Market data is unaffected either way; it is regenerable and lives on
+the ephemeral disk deliberately.
+
+Check which store is live:
+
+```bash
+curl -s https://<your-service>.onrender.com/api/health | grep -E "store_backend|accounts_durable"
+```
+
+> **Free Postgres expires 30 days after creation**, with a 14-day grace period
+> before deletion. Upgrade or export before then.
+
+### Optional: an administrator account
+
+Set `MASTER_PASSWORD` (and optionally `MASTER_USERNAME`, default `master`) on
+the **service** to create an admin account at startup. With it unset, no admin
+account exists at all — rather than one with a guessable password. Never commit
+it: this repository is public.
+
+Verify with `curl … /api/health | grep admin_configured`.
+
 Free-tier honesty notes:
 
 - The instance **sleeps after ~15 minutes idle** and wakes on the next visit
   (the first load takes ~30 seconds while it spins up).
-- Free instances have **no persistent disk** — the portfolio and collected
-  history reset whenever the instance restarts. Fine for practice; add a paid
-  disk if you want history to survive.
-- The app currently keeps **one portfolio per instance** (no accounts), so a
-  shared public URL shares one portfolio among its visitors. Per-visitor
-  portfolios are a planned next step.
+- Market data re-backfills on every cold start — about 3.5 seconds for all 15
+  assets — so ratings fill in shortly after a wake.
 
 ## Data sources — no API keys required to run locally
 
@@ -136,11 +162,28 @@ minute. *Holding* marks an asset you own; *Neutral* means genuinely flat.
 
 ```bash
 .venv/bin/python tests/test_indicators.py   # indicator correctness (RSI, MACD, EMA, ATR…)
-.venv/bin/python tests/test_manual.py       # portfolio accounting and settings guards
+.venv/bin/python tests/test_manual.py       # legacy single-portfolio accounting
+.venv/bin/python tests/test_portfolio.py    # per-user portfolios, isolation, leaderboard
+.venv/bin/python tests/test_admin.py        # block / delete / reset, and no password leak
+.venv/bin/python tests/test_ratelimit.py    # 429/418 back-off (no network needed)
+.venv/bin/python tests/test_frontend.py     # JS parses, i18n parity, DOM sanity
 ```
 
 Plain scripts, not pytest — they print PASS/FAIL per assertion and exit
 non-zero on failure. Run from the project root.
+
+`test_frontend.py` needs **node** on PATH (`brew install node`); it runs each
+script block through `node --check` and evaluates the i18n table in real
+JavaScript. A release once shipped with markup that did not parse — an
+unclosed `<noscript>` swallowed the whole body — while every API check passed
+and the page rendered blank. Braces balancing is not the same as parsing.
+
+`test_portfolio.py` and `test_admin.py` run against whichever backend is
+configured, so they double as the Postgres check:
+
+```bash
+DATABASE_URL=postgresql://… .venv/bin/python tests/test_portfolio.py
+```
 
 ## API
 
@@ -151,13 +194,35 @@ non-zero on failure. Run from the project root.
 | `GET /api/asset/{symbol}` | Live detail, rating breakdown, holding |
 | `GET /api/asset/{symbol}/prices?range=1h\|24h\|7d\|30d\|1y\|all` | Price series at range-appropriate resolution |
 | `GET /api/asset/{symbol}/ratings?range=…` | Composite-score history |
-| `GET /api/manual` | Portfolio: holdings, cash, P&L, trades |
+| `GET /api/manual` | Your portfolio: holdings, cash, P&L, trades |
 | `POST /api/manual/trade` | Buy (`usd` or `qty`) / sell (`qty` or `fraction`) |
 | `GET /api/manual/history?range=…` | Portfolio value/cash/invested/realized/fees over time |
-| `POST /api/manual/reset` | Reset the portfolio to starting capital |
+| `POST /api/manual/reset` | Reset **your own** portfolio to starting capital |
 | `POST /api/weights` | Re-score under custom axis weights |
 | `GET /api/stream` | Server-sent events — one message per completed cycle |
-| `GET /api/health` | Engine liveness |
+| `GET /api/health` | Engine liveness, data-source auth, store backend, rate-limit state |
+
+Identity is a `HttpOnly` session cookie; a first visit mints a guest so you can
+trade before signing up.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/me` | Who you are (guest, registered, admin, blocked) |
+| `POST /api/auth/signup` | Create an account — a guest keeps its portfolio |
+| `POST /api/auth/login` · `POST /api/auth/logout` | Session in / out |
+| `GET /api/leaderboard` | Global standings, marked to live prices |
+
+Administrator routes require an admin session and return **404** to everyone
+else, so the surface is not discoverable by probing. **No route can reveal a
+password** — they are one-way hashes; reset is the recovery path.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/admin/players` | Every account with live standings |
+| `GET /api/admin/player/{id}` | One player in full: trades, equity, sessions |
+| `POST /api/admin/player/{id}/block` | Block or unblock |
+| `POST /api/admin/player/{id}/delete` | Delete, releasing the username |
+| `POST /api/admin/player/{id}/password` | Set a new password |
 
 ## Layout
 

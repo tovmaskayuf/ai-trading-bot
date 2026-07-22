@@ -73,12 +73,13 @@ that suite fails loudly rather than skipping, which is deliberate.
 .venv/bin/python tests/test_portfolio.py     # per-user portfolios + leaderboard
 .venv/bin/python tests/test_admin.py         # block / delete / reset + no password leak
 .venv/bin/python tests/test_ratelimit.py     # no retry on 418/429, host cooldowns
+.venv/bin/python tests/test_maintenance.py   # retention: guest purge, equity prune
 .venv/bin/python tests/test_frontend.py      # JS parses, i18n parity, DOM sanity
 .venv/bin/python -m uvicorn server:app --port 8000   # run everything
 ```
 
-`test_portfolio.py` and `test_admin.py` run against whichever backend is
-configured, so they double as the Postgres check:
+`test_portfolio.py`, `test_admin.py` and `test_maintenance.py` run against
+whichever backend is configured, so they double as the Postgres check:
 `DATABASE_URL=postgresql://… .venv/bin/python tests/test_portfolio.py`.
 
 Always run from the project root. Tests point `config.DB_PATH` (and
@@ -154,6 +155,30 @@ literal percent becomes a placeholder.
 `_split_statements()` strips `--` comments before splitting on `;`, because a
 semicolon *inside a comment* otherwise cuts it in half and the remainder parses
 as SQL. That was a real bug.
+
+**Retention on the durable side is a size bound, not tidiness.** Free Postgres
+has a hard 1 GB ceiling and holds the *only* copy of every account, while the
+market-data store is regenerable and prunes itself. `userstore.maintenance()`
+runs one pass — `purge_stale_guests()`, `purge_expired_sessions()`,
+`prune_equity()` — from the engine on a cycle multiple, hourly at the 60s
+cadence; these are bulk deletes over indexed columns and running them per cycle
+would cost more than the rows do.
+
+The thing that made this urgent: **every cookie-less request mints a guest
+row**, so crawlers, uptime probes and one-off page loads each left one behind
+permanently, and each was charged an equity row every cycle forever —
+1,440 rows per abandoned visitor per day, in the one table that cannot be
+regenerated. Two independent guards, and both are load-bearing:
+`record_equity_all()` skips portfolios that hold nothing and never traded
+(their curve is a constant the seed row already records), and
+`purge_stale_guests()` deletes untraded guests past `GUEST_TTL_DAYS` (7).
+A guest who actually traded is kept until they claim an account, and a
+registered account is never purged at any age. `prune_equity()` trims history
+past `EQUITY_RETENTION_DAYS` (90).
+
+`_USER_TABLES` is ordered so child rows never outlive their user: **no backend
+here declares foreign keys, so nothing cascades on its own** — deleting a user
+without walking that list leaves orphans behind.
 
 ### Engine (`engine.py`)
 
@@ -281,6 +306,12 @@ read time because the engine's copy is up to a minute stale.
 first visit. **Every portfolio-mutating endpoint is scoped to that caller** —
 `/api/manual/reset` once wiped the single shared portfolio for everyone, with
 no authentication at all.
+
+The session cookie is `secure` only when `_is_local()` is false, which tests
+`RENDER` and `DATABASE_URL`. Render terminates TLS so production is always
+HTTPS, but a `secure` cookie over plain `http://127.0.0.1` is **not set at
+all** — so hardcoding it on would break login locally in a way that looks like
+broken auth rather than a cookie policy.
 
 `/` sets `Cache-Control: no-cache, must-revalidate`. The whole app is one file,
 so without it browsers apply heuristic freshness and pin users to an old build
